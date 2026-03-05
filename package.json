@@ -1,0 +1,71 @@
+{
+  "name": "plsql-beautifier",
+  "displayName": "PL/SQL Beautifier",
+  "description": "Format PL/SQL / SQL code using PL/SQL Developer-compatible beautifier settings",
+  "version": "0.1.2",
+  "publisher": "plsql-tools",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plsql-tools/plsql-beautifier"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Formatters",
+    "Programming Languages"
+  ],
+  "keywords": ["plsql", "sql", "oracle", "formatter", "beautifier"],
+  "activationEvents": [
+    "onLanguage:sql",
+    "onLanguage:plsql",
+    "onLanguage:oraclesql",
+    "onLanguage:oracle-sql"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "PL/SQL Beautifier",
+      "properties": {
+        "plsqlBeautifier.configFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a PL/SQL Developer .br config file. Leave empty to use built-in defaults."
+        },
+        "plsqlBeautifier.searchWorkspaceForBrFile": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically search the workspace root for a .br config file."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "plsqlBeautifier.formatDocument",
+        "title": "Format PL/SQL Document",
+        "category": "PL/SQL Beautifier"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "plsqlBeautifier.formatDocument",
+          "when": "editorLangId == sql || editorLangId == plsql || editorLangId == oraclesql || editorLangId == oracle-sql"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^2.19.0",
+    "typescript": "^5.0.0"
+  }
+}

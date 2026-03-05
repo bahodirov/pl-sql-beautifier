@@ -1,0 +1,114 @@
+# PL/SQL Beautifier
+
+A Visual Studio Code extension that formats PL/SQL and SQL code using **PL/SQL Developer–compatible** beautifier rules.
+
+## Features
+
+- Formats PL/SQL packages, procedures, functions, triggers, and anonymous blocks
+- Reads your existing **PL/SQL Developer `.br` config file** — no need to reconfigure
+- Supports all common PL/SQL constructs:
+  - `IF / ELSIF / ELSE / END IF`
+  - `CASE / WHEN / ELSE / END CASE`
+  - `FOR`, `WHILE`, `LOOP` statements
+  - `SELECT / INSERT / UPDATE / DELETE / MERGE` with right-aligned keywords
+  - `CURSOR`, `TYPE ... IS RECORD`, `TYPE ... IS TABLE` declarations
+  - Exception handlers (`EXCEPTION / WHEN ... THEN`)
+  - `CREATE OR REPLACE PROCEDURE / FUNCTION / PACKAGE BODY`
+- Declaration group alignment (variable names, types, `:=` values aligned)
+- Assignment group alignment (`:=` signs aligned in BEGIN blocks)
+- Parameter list formatting with aligned columns
+- Query alias lowercasing (`Mrf_Table t` → `t` stays lowercase)
+- Separator line preservation (`---------` lines kept at correct indentation)
+
+## Usage
+
+1. Open a `.sql` or `.pkb` / `.pks` file
+2. Press `Shift+Alt+F` (Format Document)
+3. If prompted, choose **PL/SQL Beautifier**
+
+Or right-click → **Format Document** → **Format Document With...** → **PL/SQL Beautifier**
+
+## Configuration
+
+### Option 1: Use your PL/SQL Developer config file (Recommended)
+
+In VSCode Settings (`Ctrl+,`), search for **plsqlBeautifier**:
+
+- **`plsqlBeautifier.configFile`** — Full path to your `.br` file:
+  ```
+  C:\path\to\your\plsqbeautifier.br
+  ```
+
+- **`plsqlBeautifier.searchWorkspaceForBrFile`** — When `true` (default), automatically searches the workspace root folder for a `.br` file.
+
+### Option 2: Built-in defaults
+
+If no `.br` file is configured or found, the extension uses sensible defaults:
+- Keywords: UPPERCASE
+- Identifiers: Init_Cap (e.g. `Get_Local_Code`)
+- Indent: 2 spaces
+- Blank lines: max 1
+- DML keywords: right-aligned
+- WHERE clause: AND/OR on separate lines
+
+## Formatting Example
+
+**Before:**
+```sql
+create or replace function get_local_code(i_filial_id number,i_source_code varchar2) return varchar2 is
+v_result varchar2(100);
+begin
+select t.local_code into v_result from mrf_local_codes t where t.filial_id=i_filial_id and t.source_code=i_source_code;
+return v_result;
+exception when no_data_found then return null;
+end;
+```
+
+**After:**
+```sql
+create or replace function Get_Local_Code
+(
+  i_Filial_Id    number,
+  i_Source_Code  varchar2
+) return varchar2 is
+  v_Result varchar2(100);
+begin
+  select t.Local_Code
+    into v_Result
+    from Mrf_Local_Codes t
+   where t.Filial_Id = i_Filial_Id
+     and t.Source_Code = i_Source_Code;
+
+  return v_Result;
+exception
+  when No_Data_Found then
+    return null;
+end;
+```
+
+## Supported File Types
+
+The extension activates for the following language IDs:
+- `sql`
+- `plsql`
+- `oraclesql`
+- `oracle-sql`
+
+To associate `.pkb`, `.pks`, `.prc`, `.fnc` files with a supported language, add to your VSCode settings:
+
+```json
+"files.associations": {
+  "*.pkb": "sql",
+  "*.pks": "sql",
+  "*.prc": "sql",
+  "*.fnc": "sql"
+}
+```
+
+## Requirements
+
+- Visual Studio Code 1.80.0 or higher
+
+## License
+
+MIT
