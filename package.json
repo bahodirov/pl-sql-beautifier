@@ -3,7 +3,7 @@
   "displayName": "PL/SQL Beautifier",
   "description": "Format PL/SQL / SQL code using PL/SQL Developer-compatible beautifier settings",
   "version": "0.1.2",
-  "publisher": "plsql-tools",
+  "publisher": "Dilshod",
   "license": "MIT",
   "repository": {
     "type": "git",
