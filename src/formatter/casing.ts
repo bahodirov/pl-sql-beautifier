@@ -2,6 +2,12 @@ import { Token, TokenType } from './token';
 import { BeautifierConfig } from './config';
 
 export function applyKeywordCase(val: string, cfg: BeautifierConfig): string {
+  // Check special case words first (e.g., FUNCTION → Function, PROCEDURE → Procedure)
+  if (cfg.useSpecialCase) {
+    const lc = val.toLowerCase();
+    const special = cfg.specialCaseWords.get(lc);
+    if (special !== undefined) return special;
+  }
   if (cfg.keywordCase === 'UPPER') return val.toUpperCase();
   if (cfg.keywordCase === 'LOWER') return val.toLowerCase();
   if (cfg.keywordCase === 'PRESERVE') return val;

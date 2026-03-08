@@ -80,7 +80,7 @@ export const DEFAULT_CONFIG: BeautifierConfig = {
     selectItemList: { format: 1, align: true, commaAfter: true, atLeftMargin: false },
     updateItemList: { format: 2, align: true, commaAfter: true, atLeftMargin: false },
   },
-  parameterDeclarationList: { format: 2, align: true, commaAfter: true, atLeftMargin: true },
+  parameterDeclarationList: { format: 2, align: true, commaAfter: true, atLeftMargin: false },
   recordFieldList: { format: 1, align: true, commaAfter: true, atLeftMargin: false },
   splitAndOr: false,
   andOrAfterExpression: false,
