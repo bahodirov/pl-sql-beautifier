@@ -66,24 +66,24 @@ end;
 
 **After:**
 ```sql
-create or replace function Get_Local_Code
+CREATE OR REPLACE Function Get_Local_Code
 (
   i_Filial_Id    number,
   i_Source_Code  varchar2
-) return varchar2 is
+) RETURN varchar2 IS
   v_Result varchar2(100);
-begin
-  select t.Local_Code
-    into v_Result
-    from Mrf_Local_Codes t
-   where t.Filial_Id = i_Filial_Id
-     and t.Source_Code = i_Source_Code;
+BEGIN
+  SELECT t.Local_Code
+    INTO v_Result
+    FROM Mrf_Local_Codes t
+   WHERE t.Filial_Id = i_Filial_Id
+     AND t.Source_Code = i_Source_Code;
 
-  return v_Result;
-exception
-  when No_Data_Found then
-    return null;
-end;
+  RETURN v_Result;
+EXCEPTION
+  WHEN No_Data_Found THEN
+    RETURN NULL;
+END;
 ```
 
 ## Supported File Types

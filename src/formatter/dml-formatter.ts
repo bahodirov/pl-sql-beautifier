@@ -19,7 +19,7 @@ const JOIN_KEYWORDS = new Set([
   'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER', 'CROSS', 'NATURAL',
 ]);
 
-function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = false): string {
+function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = false, lowerFunctions = true): string {
   const parts: string[] = [];
   let prevMeaningful: Token | null = null;
 
@@ -33,7 +33,10 @@ function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = fals
     }
 
     let val: string;
-    if (lowerAliases && t.type === TokenType.IDENTIFIER) {
+    if (lowerFunctions && t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN) {
+      // SQL function call: lowercase the function name (e.g. count, max, nvl)
+      val = t.raw.toLowerCase();
+    } else if (lowerAliases && t.type === TokenType.IDENTIFIER) {
       // Alias definition: IDENTIFIER or RPAREN or (AS keyword) → next IDENTIFIER is alias
       const isAliasDef = prevMeaningful !== null && (
         prevMeaningful.type === TokenType.IDENTIFIER ||
@@ -60,7 +63,7 @@ function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = fals
         t.type === TokenType.DOT
       ) {
         // no space
-      } else if (next.type === TokenType.LPAREN && t.type === TokenType.IDENTIFIER) {
+      } else if (next.type === TokenType.LPAREN && (t.type === TokenType.IDENTIFIER || t.type === TokenType.KEYWORD)) {
         // function call: no space before (
       } else {
         parts.push(' ');
@@ -258,11 +261,9 @@ function formatWhereClause(
 
 function computeAndOrIndent(wherePadded: string, kwWidth: number, baseIndent: string, cfg: BeautifierConfig): string {
   if (cfg.dml.where.andOrUnderWhere) {
-    // AND/OR right-aligns with WHERE: "WHERE" is 5 chars, "AND" is 3, "OR" is 2
-    // We want AND to start so that the A is at the same position as W of WHERE
-    const wherePos = baseIndent.length + wherePadded.length - 5; // position of W
-    // Pad with spaces so AND/OR starts at wherePos
-    return ' '.repeat(Math.max(0, wherePos));
+    // AND/OR aligns with WHERE position, then indented by one extra indent level
+    const wherePos = baseIndent.length + wherePadded.length - 5; // position of W in WHERE
+    return ' '.repeat(Math.max(0, wherePos)) + ' '.repeat(cfg.indent);
   }
   return baseIndent + ' '.repeat(kwWidth + 1);
 }
