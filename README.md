@@ -14,9 +14,10 @@ A Visual Studio Code extension that formats PL/SQL and SQL code using **PL/SQL D
   - `CURSOR`, `TYPE ... IS RECORD`, `TYPE ... IS TABLE` declarations
   - Exception handlers (`EXCEPTION / WHEN ... THEN`)
   - `CREATE OR REPLACE PROCEDURE / FUNCTION / PACKAGE BODY`
-- Declaration group alignment (variable names, types, `:=` values aligned)
+- Declaration group alignment (variable names aligned; `:=` follows the type with one space)
 - Assignment group alignment (`:=` signs aligned in BEGIN blocks)
 - Parameter list formatting with aligned columns
+- Multi-argument function/procedure calls broken across lines, each argument aligned under the first
 - Query alias lowercasing (`Mrf_Table t` → `t` stays lowercase)
 - Separator line preservation (`---------` lines kept at correct indentation)
 
@@ -57,7 +58,9 @@ If no `.br` file is configured or found, the extension uses sensible defaults:
 ```sql
 create or replace function get_local_code(i_filial_id number,i_source_code varchar2) return varchar2 is
 v_result varchar2(100);
+v_use_local_code boolean:=false;
 begin
+v_use_local_code:=pkg.get_flag(i_company_id=>v_company_id,i_filial_id=>v_filial_id);
 select t.local_code into v_result from mrf_local_codes t where t.filial_id=i_filial_id and t.source_code=i_source_code;
 return v_result;
 exception when no_data_found then return null;
@@ -71,8 +74,12 @@ CREATE OR REPLACE Function Get_Local_Code
   i_Filial_Id    number,
   i_Source_Code  varchar2
 ) RETURN varchar2 IS
-  v_Result varchar2(100);
+  v_Result         varchar2(100);
+  v_Use_Local_Code boolean := false;
 BEGIN
+  v_Use_Local_Code := Pkg.Get_Flag(i_Company_Id => v_Company_Id,
+                                   i_Filial_Id => v_Filial_Id);
+
   SELECT t.Local_Code
     INTO v_Result
     FROM Mrf_Local_Codes t
