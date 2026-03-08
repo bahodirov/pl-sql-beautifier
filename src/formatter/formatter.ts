@@ -470,9 +470,20 @@ export function format(src: string, cfg: BeautifierConfig): string {
         if (peek().type === TokenType.LINE_COMMENT && !isSeparatorComment(peek().raw) && assignSemiLine >= 0 && peek().line === assignSemiLine) comment = consume().raw;
 
         const lhs = inlineTokens(lhsToks);
-        const rhs = inlineTokens(rhsToks);
-        const assignLine: AssignLine = { indent: indentStr(), lhs, rhs, comment };
-        assignGroup.push({ blankBefore: blanks, line: assignLine });
+
+        if (hasMultipleCallArgs(rhsToks)) {
+          // Multi-arg function call: flush pending group and emit with line breaks
+          flushAssignGroup(assignGroup);
+          assignGroup = [];
+          const prefixLen = indentStr().length + lhs.length + ' := '.length;
+          const rhs = formatCallWithBreaking(rhsToks, prefixLen);
+          const commentStr = comment ? `  ${comment}` : '';
+          emit(`${indentStr()}${lhs} := ${rhs};${commentStr}`, blanks);
+        } else {
+          const rhs = inlineTokens(rhsToks);
+          const assignLine: AssignLine = { indent: indentStr(), lhs, rhs, comment };
+          assignGroup.push({ blankBefore: blanks, line: assignLine });
+        }
         continue;
       }
 
@@ -480,7 +491,18 @@ export function format(src: string, cfg: BeautifierConfig): string {
       flushAssignGroup(assignGroup);
       assignGroup = [];
       const stmt = collectUntil(tok => tok.type === TokenType.SEMICOLON, true);
-      if (stmt.length > 0) emit(indentStr() + inlineTokens(stmt), blanks);
+      if (stmt.length > 0) {
+        // stmt ends with ';' — check if it's a multi-arg procedure call
+        const stmtBody = stmt[stmt.length - 1]?.type === TokenType.SEMICOLON
+          ? stmt.slice(0, -1) : stmt;
+        if (hasMultipleCallArgs(stmtBody)) {
+          const prefixLen = indentStr().length;
+          const formatted = formatCallWithBreaking(stmtBody, prefixLen);
+          emit(`${indentStr()}${formatted};`, blanks);
+        } else {
+          emit(indentStr() + inlineTokens(stmt), blanks);
+        }
+      }
     }
 
     flushAssignGroup(assignGroup);
@@ -498,6 +520,90 @@ export function format(src: string, cfg: BeautifierConfig): string {
       else if (depth === 0 && t.type === TokenType.SEMICOLON) return false;
     }
     return false;
+  }
+
+  // Check if toks is a standalone function/procedure call with 2+ arguments.
+  // Returns false if there are meaningful tokens after the closing parenthesis.
+  function hasMultipleCallArgs(toks: Token[]): boolean {
+    if (toks.length < 4) return false;
+    let j = 0;
+    if (toks[j].type !== TokenType.IDENTIFIER) return false;
+    j++;
+    // Allow dotted name: Pkg.Func or Pkg.Sub.Func
+    while (j + 1 < toks.length &&
+           toks[j].type === TokenType.DOT &&
+           toks[j + 1].type === TokenType.IDENTIFIER) {
+      j += 2;
+    }
+    if (j >= toks.length || toks[j].type !== TokenType.LPAREN) return false;
+    j++; // past LPAREN
+    // Scan args, track depth, look for comma at depth 0
+    let depth = 0;
+    let hasComma = false;
+    for (; j < toks.length; j++) {
+      const tok = toks[j];
+      if (tok.type === TokenType.RPAREN && depth === 0) { j++; break; }
+      if (tok.type === TokenType.LPAREN) depth++;
+      else if (tok.type === TokenType.RPAREN) depth--;
+      else if (depth === 0 && tok.type === TokenType.COMMA) hasComma = true;
+    }
+    if (!hasComma) return false;
+    // Ensure nothing meaningful follows the closing paren (only semicolons allowed)
+    for (; j < toks.length; j++) {
+      if (toks[j].type !== TokenType.SEMICOLON) return false;
+    }
+    return true;
+  }
+
+  // Format a multi-arg function call with each argument on its own line,
+  // aligned to the column right after the opening parenthesis.
+  // prefixLen = number of characters before the function name on the current output line.
+  function formatCallWithBreaking(toks: Token[], prefixLen: number): string {
+    let j = 0;
+    const nameToks: Token[] = [];
+    while (j < toks.length && toks[j].type !== TokenType.LPAREN) {
+      nameToks.push(toks[j]);
+      j++;
+    }
+    const funcName = inlineTokens(nameToks);
+    if (j >= toks.length || toks[j].type !== TokenType.LPAREN) {
+      return inlineTokens(toks); // fallback: no LPAREN found
+    }
+    j++; // skip LPAREN
+
+    // Extract comma-separated argument groups at depth 0
+    const argGroups: Token[][] = [];
+    let curGroup: Token[] = [];
+    let depth = 0;
+    for (; j < toks.length; j++) {
+      const tok = toks[j];
+      if (depth === 0 && tok.type === TokenType.RPAREN) break;
+      if (tok.type === TokenType.LPAREN) depth++;
+      else if (tok.type === TokenType.RPAREN) depth--;
+      if (depth === 0 && tok.type === TokenType.COMMA) {
+        argGroups.push(curGroup);
+        curGroup = [];
+      } else {
+        curGroup.push(tok);
+      }
+    }
+    if (curGroup.length > 0) argGroups.push(curGroup);
+
+    if (argGroups.length <= 1) {
+      return inlineTokens(toks); // single arg — keep inline
+    }
+
+    // Column where the first argument starts (one past the opening parenthesis)
+    const argStartCol = prefixLen + funcName.length + 1;
+    const argIndent   = ' '.repeat(argStartCol);
+    const formattedArgs = argGroups.map(g => inlineTokens(g));
+
+    let result = funcName + '(' + formattedArgs[0] + ',\n';
+    for (let k = 1; k < formattedArgs.length; k++) {
+      const isLast = k === formattedArgs.length - 1;
+      result += argIndent + formattedArgs[k] + (isLast ? ')' : ',\n');
+    }
+    return result;
   }
 
   function processIf(blankBefore: number): void {

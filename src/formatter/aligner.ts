@@ -26,18 +26,14 @@ export interface ParamLine {
 }
 
 export function alignDeclarations(lines: DeclLine[]): string[] {
-  const maxIdLen   = Math.max(...lines.map(l => l.identifier.length));
-  const maxTypeLen = Math.max(...lines.map(l => l.dataType.length + (l.constraint ? l.constraint.length + 1 : 0)));
-  const anyHasDefault = lines.some(l => l.defaultVal !== '');
+  const maxIdLen = Math.max(...lines.map(l => l.identifier.length));
 
   return lines.map(l => {
-    const id     = l.identifier.padEnd(maxIdLen);
+    const id      = l.identifier.padEnd(maxIdLen);
     const typeStr = l.constraint ? `${l.constraint} ${l.dataType}` : l.dataType;
-    // Pad type column only for lines that have a default value (to align := signs)
-    const type   = (anyHasDefault && l.defaultVal !== '') ? typeStr.padEnd(maxTypeLen) : typeStr;
-    const def    = l.defaultVal ? ` := ${l.defaultVal}` : '';
+    const def     = l.defaultVal ? ` := ${l.defaultVal}` : '';
     const comment = l.comment ? `  ${l.comment}` : '';
-    return `${l.indent}${id} ${type}${def}${l.semicolon}${comment}`;
+    return `${l.indent}${id} ${typeStr}${def}${l.semicolon}${comment}`;
   });
 }
 

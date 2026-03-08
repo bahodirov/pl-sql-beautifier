@@ -8,6 +8,8 @@
 - **Parameter list indentation**: Function/procedure parameters are now indented one level inside the opening parenthesis (e.g. 2 spaces for default indent), giving clearer visual separation.
 - **WHERE clause AND/OR indentation**: `AND` and `OR` conditions inside a `WHERE` clause are now indented one extra level from the `WHERE` keyword, making nested conditions easier to read.
 - **SQL function names lowercase**: Built-in SQL functions (e.g. `count`, `max`, `min`, `sum`, `nvl`, `to_char`) are now rendered in lowercase when used inside SQL queries.
+- **Variable declaration `:=` spacing**: Default values are now written with exactly one space after the type (`boolean := false;`) instead of being pushed far right to align `:=` signs across the group.
+- **Multi-argument function call formatting**: Function and procedure calls with more than one argument are now split across multiple lines, with each argument aligned under the first argument (column right after the opening parenthesis).
 
 ## [0.1.2] - 2025-01-01
 
