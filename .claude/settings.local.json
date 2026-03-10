@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run package)"
+      "Bash(npm run package)",
+      "Bash(npx tsc:*)",
+      "Bash(node -e \":*)"
     ]
   }
 }

@@ -18,6 +18,8 @@ A Visual Studio Code extension that formats PL/SQL and SQL code using **PL/SQL D
 - Assignment group alignment (`:=` signs aligned in BEGIN blocks)
 - Parameter list formatting with aligned columns
 - Multi-argument function/procedure calls broken across lines, each argument aligned under the first
+- Cursor `FOR` loop queries formatted across multiple lines with right-aligned DML keywords
+- Automatic blank line before `RETURN` statements for readability
 - Query alias lowercasing (`Mrf_Table t` → `t` stays lowercase)
 - Separator line preservation (`---------` lines kept at correct indentation)
 

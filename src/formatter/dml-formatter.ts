@@ -79,6 +79,135 @@ interface DMLClause {
   tokens: Token[];      // everything after the keyword until next clause
 }
 
+/**
+ * Format a token sequence, rendering any embedded (SELECT ...) or (WITH ...)
+ * subqueries as multiline blocks using formatDML.
+ * Mirrors tokensToStr casing logic but recurses into subqueries.
+ *
+ * @param tokens       tokens to render
+ * @param cfg          formatter config
+ * @param startCol     characters already on the current line before these tokens
+ * @param lowerAliases lowercase table alias identifiers (use true for WHERE/FROM)
+ */
+function formatTokensWithSubqueries(
+  tokens: Token[],
+  cfg: BeautifierConfig,
+  startCol: number,
+  lowerAliases = false
+): string {
+  const out: string[] = [];
+  let col = startCol;
+  let i = 0;
+  let prevMeaningful: Token | null = null;
+
+  while (i < tokens.length) {
+    const t = tokens[i];
+    const next = tokens[i + 1];
+
+    // Detect subquery: LPAREN immediately followed by SELECT or WITH keyword
+    if (
+      t.type === TokenType.LPAREN &&
+      next?.type === TokenType.KEYWORD &&
+      (next.value === 'SELECT' || next.value === 'WITH')
+    ) {
+      const inner: Token[] = [];
+      let depth = 1;
+      let k = i + 1;
+      while (k < tokens.length) {
+        const tok = tokens[k];
+        if (tok.type === TokenType.LPAREN) depth++;
+        else if (tok.type === TokenType.RPAREN) { depth--; if (depth === 0) break; }
+        inner.push(tok);
+        k++;
+      }
+      // k is at the closing RPAREN (or past end if malformed)
+      const subBaseIndent = ' '.repeat(col + 1); // +1 for '('
+      const formattedSub = formatDML(inner, cfg, subBaseIndent);
+      const subLines = formattedSub.split('\n');
+      subLines[0] = '(' + subLines[0].trimStart();
+      subLines[subLines.length - 1] += ')';
+      out.push(subLines.join('\n'));
+      col = subLines[subLines.length - 1].length;
+      i = k + 1; // advance past closing RPAREN
+      prevMeaningful = { type: TokenType.RPAREN, raw: ')', value: ')', line: 0, col: 0 };
+      // Add space after ) if the next token needs it
+      if (i < tokens.length) {
+        const aft = tokens[i];
+        if (
+          aft.type !== TokenType.COMMA &&
+          aft.type !== TokenType.RPAREN &&
+          aft.type !== TokenType.SEMICOLON &&
+          aft.type !== TokenType.DOT
+        ) {
+          out.push(' ');
+          col++;
+        }
+      }
+      continue;
+    }
+
+    // Regular token — mirror tokensToStr casing logic
+    let val: string;
+    if (t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN) {
+      val = t.raw.toLowerCase(); // SQL function call
+    } else if (lowerAliases && t.type === TokenType.IDENTIFIER) {
+      const isAliasDef = prevMeaningful !== null && (
+        prevMeaningful.type === TokenType.IDENTIFIER ||
+        prevMeaningful.type === TokenType.RPAREN ||
+        (prevMeaningful.type === TokenType.KEYWORD && prevMeaningful.value === 'AS')
+      );
+      const isAliasQualifier = next?.type === TokenType.DOT;
+      val = (isAliasDef || isAliasQualifier) ? t.raw.toLowerCase() : applyCasing(t, cfg);
+    } else {
+      val = applyCasing(t, cfg);
+    }
+
+    out.push(val);
+    col += val.length;
+    prevMeaningful = t;
+
+    if (next) {
+      if (
+        t.type === TokenType.LPAREN ||
+        next.type === TokenType.RPAREN ||
+        next.type === TokenType.COMMA ||
+        next.type === TokenType.SEMICOLON ||
+        next.type === TokenType.DOT ||
+        t.type === TokenType.DOT ||
+        (next.type === TokenType.LPAREN && (t.type === TokenType.IDENTIFIER || t.type === TokenType.KEYWORD))
+      ) {
+        // no space
+      } else {
+        out.push(' ');
+        col++;
+      }
+    }
+    i++;
+  }
+
+  return out.join('');
+}
+
+/** Split SELECT item list into groups of tokens (one group per item, no commas). */
+function splitSelectItemTokens(tokens: Token[]): Token[][] {
+  const items: Token[][] = [];
+  let depth = 0;
+  let current: Token[] = [];
+
+  for (const t of tokens) {
+    if (t.type === TokenType.LPAREN) depth++;
+    else if (t.type === TokenType.RPAREN) depth--;
+    if (depth === 0 && t.type === TokenType.COMMA) {
+      if (current.length > 0) items.push(current);
+      current = [];
+    } else {
+      current.push(t);
+    }
+  }
+  if (current.length > 0) items.push(current);
+  return items;
+}
+
 export function formatDML(
   stmtTokens: Token[],
   cfg: BeautifierConfig,
@@ -123,17 +252,26 @@ function formatSelect(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
     if (clause.keyword === 'SELECT') {
       const padded = padKeyword(kw, kwWidth, cfg.dml.leftAlignKeywords);
       const itemIndent = baseIndent + ' '.repeat(padded.length + 1);
-      const items = splitSelectItems(clause.tokens, cfg);
+      const itemGroups = splitSelectItemTokens(clause.tokens);
 
-      if (items.length === 0) {
+      if (itemGroups.length === 0) {
         lines.push(`${baseIndent}${padded}`);
       } else if (cfg.dml.selectItemList.format === 1) {
-        lines.push(`${baseIndent}${padded} ${items[0]}`);
-        for (let i = 1; i < items.length; i++) {
-          lines.push(`${itemIndent}${items[i]}`);
+        const firstPrefix = `${baseIndent}${padded} `;
+        const firstStr = formatTokensWithSubqueries(itemGroups[0], cfg, firstPrefix.length);
+        lines.push(firstPrefix + firstStr + (itemGroups.length > 1 ? ',' : ''));
+        for (let si = 1; si < itemGroups.length; si++) {
+          const isLast = si === itemGroups.length - 1;
+          const itemStr = formatTokensWithSubqueries(itemGroups[si], cfg, itemIndent.length);
+          lines.push(itemIndent + itemStr + (isLast ? '' : ','));
         }
       } else {
-        lines.push(`${baseIndent}${padded} ${items.join(', ')}`);
+        const prefix = `${baseIndent}${padded} `;
+        const allStr = itemGroups.map((g, idx) => {
+          const s = formatTokensWithSubqueries(g, cfg, prefix.length);
+          return idx < itemGroups.length - 1 ? s + ',' : s;
+        }).join(' ');
+        lines.push(prefix + allStr);
       }
 
     } else if (clause.keyword === 'FROM') {
@@ -221,7 +359,8 @@ function formatFromClause(
           const afterOn  = j.tokens.slice(onIdx + 1);
           lines.push(`${baseIndent}${padded} ${tokensToStr(beforeOn, cfg, true)}`);
           const onPadded = padKeyword(applyKeywordCase('ON', cfg), kwWidth, cfg.dml.leftAlignKeywords);
-          lines.push(`${baseIndent}${onPadded} ${tokensToStr(afterOn, cfg, true)}`);
+          // Use formatWhereClause to split AND/OR conditions in ON clause
+          lines.push(...formatWhereClause(afterOn, cfg, baseIndent, onPadded, kwWidth));
         } else {
           lines.push(`${baseIndent}${padded} ${tokensToStr(j.tokens, cfg, true)}`);
         }
@@ -238,7 +377,8 @@ function formatWhereClause(
   baseIndent: string, wherePadded: string, kwWidth: number
 ): string[] {
   if (!cfg.dml.where.splitAndOr || tokens.length === 0) {
-    return [`${baseIndent}${wherePadded} ${tokensToStr(tokens, cfg, true)}`];
+    const prefix = `${baseIndent}${wherePadded} `;
+    return [prefix + formatTokensWithSubqueries(tokens, cfg, prefix.length, true)];
   }
 
   const lines: string[] = [];
@@ -250,10 +390,12 @@ function formatWhereClause(
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     if (i === 0) {
-      lines.push(`${baseIndent}${wherePadded} ${tokensToStr(part.tokens, cfg, true)}`);
+      const prefix0 = `${baseIndent}${wherePadded} `;
+      lines.push(prefix0 + formatTokensWithSubqueries(part.tokens, cfg, prefix0.length, true));
     } else {
       const andOr = applyKeywordCase(part.connector, cfg);
-      lines.push(`${andOrIndent}${andOr} ${tokensToStr(part.tokens, cfg, true)}`);
+      const prefixN = `${andOrIndent}${andOr} `;
+      lines.push(prefixN + formatTokensWithSubqueries(part.tokens, cfg, prefixN.length, true));
     }
   }
   return lines;
@@ -352,10 +494,12 @@ function formatInsert(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
   let valTokens: Token[] = [];
   let selectTokens: Token[] = [];
 
-  // Collect INTO + tableName
+  // Collect INTO + tableName (skip the INTO keyword itself — we add it explicitly)
   while (i < tokens.length && tokens[i]?.value !== 'VALUES' && tokens[i]?.type !== TokenType.LPAREN && tokens[i]?.value !== 'SELECT') {
     intoAndTable.push(tokens[i++]);
   }
+  // Drop leading INTO keyword if present (avoid duplication)
+  if (intoAndTable[0]?.value === 'INTO') intoAndTable = intoAndTable.slice(1);
 
   // Column list?
   if (i < tokens.length && tokens[i]?.type === TokenType.LPAREN) {
@@ -375,10 +519,8 @@ function formatInsert(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
   }
 
   const intoStr = tokensToStr(intoAndTable, cfg);
-  const insertPadded = padKeyword(kw, kwWidth, cfg.dml.leftAlignKeywords);
-  const intoPadded   = padKeyword(intoKw, kwWidth, cfg.dml.leftAlignKeywords);
-
-  lines.push(`${baseIndent}${insertPadded} ${intoPadded} ${intoStr}`);
+  // INSERT INTO — no padding, just a single space between keywords
+  lines.push(`${baseIndent}${kw} ${intoKw} ${intoStr}`);
 
   if (colTokens.length > 0) {
     const cols = splitCommaList(colTokens);

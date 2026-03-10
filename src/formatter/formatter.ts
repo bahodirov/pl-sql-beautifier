@@ -458,6 +458,66 @@ export function format(src: string, cfg: BeautifierConfig): string {
         continue;
       }
 
+      // ── OPEN cursor FOR SELECT/WITH ──
+      if (t.value === 'OPEN' && t.type === TokenType.KEYWORD) {
+        flushAssignGroup(assignGroup);
+        assignGroup = [];
+        const stmtToks = collectUntil(tok => tok.type === TokenType.SEMICOLON, false);
+        const forIdx = stmtToks.findIndex(
+          (tok, i) => i > 0 && tok.value === 'FOR' && tok.type === TokenType.KEYWORD
+        );
+        if (
+          forIdx >= 0 &&
+          forIdx + 1 < stmtToks.length &&
+          stmtToks[forIdx + 1].type === TokenType.KEYWORD &&
+          (stmtToks[forIdx + 1].value === 'SELECT' || stmtToks[forIdx + 1].value === 'WITH')
+        ) {
+          const openPart = inlineTokens(stmtToks.slice(0, forIdx + 1));
+          const selectToks = stmtToks.slice(forIdx + 1);
+          const prefix = `${indentStr()}${openPart} `;
+          const formattedSelect = formatDML(selectToks, cfg, ' '.repeat(prefix.length));
+          const selLines = formattedSelect.split('\n');
+          selLines[0] = prefix + selLines[0].trimStart();
+          if (peek().type === TokenType.SEMICOLON) consume();
+          emit(selLines.join('\n') + ';', blanks);
+        } else {
+          if (peek().type === TokenType.SEMICOLON) consume();
+          emit(indentStr() + inlineTokens(stmtToks) + ';', blanks);
+        }
+        continue;
+      }
+
+      // ── Nested anonymous BEGIN ... [EXCEPTION] ... END block ──
+      if (t.value === 'BEGIN' && t.type === TokenType.KEYWORD) {
+        flushAssignGroup(assignGroup);
+        assignGroup = [];
+        consume(); // BEGIN
+        emit(indentStr() + applyKeywordCase('BEGIN', cfg), blanks);
+        push(Context.BEGIN_BLOCK);
+        processBeginBlock();
+
+        // EXCEPTION clause (optional)
+        if (!isDone() && peek().value === 'EXCEPTION' && peek().type === TokenType.KEYWORD) {
+          consume();
+          emit(indentStr(-1) + applyKeywordCase('EXCEPTION', cfg));
+          processExceptionSection();
+        }
+
+        pop();
+
+        // END [label] ;
+        if (!isDone() && peek().value === 'END' && peek().type === TokenType.KEYWORD) {
+          consume();
+          let endLabel = '';
+          if (!isDone() && peek().type === TokenType.IDENTIFIER) {
+            endLabel = ' ' + applyIdentifierCase(consume().raw, cfg);
+          }
+          if (!isDone() && peek().type === TokenType.SEMICOLON) consume();
+          emit(indentStr() + applyKeywordCase('END', cfg) + endLabel + ';');
+        }
+        continue;
+      }
+
       // ── Assignment: identifier :=  ──
       if ((t.type === TokenType.IDENTIFIER || t.type === TokenType.KEYWORD) &&
           lookAheadForAssignment()) {
@@ -484,6 +544,15 @@ export function format(src: string, cfg: BeautifierConfig): string {
           const assignLine: AssignLine = { indent: indentStr(), lhs, rhs, comment };
           assignGroup.push({ blankBefore: blanks, line: assignLine });
         }
+        continue;
+      }
+
+      // ── RETURN statement: ensure at least one blank line before ──
+      if (t.value === 'RETURN' && t.type === TokenType.KEYWORD) {
+        flushAssignGroup(assignGroup);
+        assignGroup = [];
+        const stmt = collectUntil(tok => tok.type === TokenType.SEMICOLON, true);
+        emit(indentStr() + inlineTokens(stmt), Math.max(blanks, 1));
         continue;
       }
 
@@ -709,11 +778,38 @@ export function format(src: string, cfg: BeautifierConfig): string {
     const headerTokens = collectUntil(tok => tok.value === 'LOOP' && tok.type === TokenType.KEYWORD);
     const forKw = applyKeywordCase('FOR', cfg);
 
-    if (cfg.loopOnNewLine) {
-      emit(indentStr() + forKw + ' ' + inlineTokens(headerTokens), blankBefore);
-      emit(indentStr() + applyKeywordCase('LOOP', cfg));
+    // Detect cursor FOR loop: var IN (SELECT ...)
+    const isCursorFor =
+      headerTokens.length >= 4 &&
+      headerTokens[1]?.value === 'IN' &&
+      headerTokens[2]?.type === TokenType.LPAREN &&
+      (headerTokens[3]?.value === 'SELECT' || headerTokens[3]?.value === 'WITH');
+
+    if (isCursorFor) {
+      const varName = applyIdentifierCase(headerTokens[0].raw, cfg);
+      const inKw = applyKeywordCase('IN', cfg);
+      // Tokens between outer parens: skip leading LPAREN and trailing RPAREN
+      const selectToks = headerTokens.slice(3, headerTokens.length - 1);
+      const prefix = `${indentStr()}${forKw} ${varName} ${inKw} (`;
+      const dmlIndent = ' '.repeat(prefix.length);
+      const formattedDML = formatDML(selectToks, cfg, dmlIndent);
+      const dmlLines = formattedDML.split('\n');
+      dmlLines[0] = prefix + dmlLines[0].trimStart();
+      dmlLines[dmlLines.length - 1] += ')';
+      const forLine = dmlLines.join('\n');
+      if (cfg.loopOnNewLine) {
+        emit(forLine, blankBefore);
+        emit(indentStr() + applyKeywordCase('LOOP', cfg));
+      } else {
+        emit(forLine + ' ' + applyKeywordCase('LOOP', cfg), blankBefore);
+      }
     } else {
-      emit(indentStr() + forKw + ' ' + inlineTokens(headerTokens) + ' ' + applyKeywordCase('LOOP', cfg), blankBefore);
+      if (cfg.loopOnNewLine) {
+        emit(indentStr() + forKw + ' ' + inlineTokens(headerTokens), blankBefore);
+        emit(indentStr() + applyKeywordCase('LOOP', cfg));
+      } else {
+        emit(indentStr() + forKw + ' ' + inlineTokens(headerTokens) + ' ' + applyKeywordCase('LOOP', cfg), blankBefore);
+      }
     }
     consume(); // LOOP
 
@@ -885,9 +981,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
         defaultVal = inlineTokens(part.slice(pi));
       }
 
-      const paramIndent = cfg.parameterDeclarationList.atLeftMargin
-        ? indentStr()
-        : indentStr() + ' '.repeat(cfg.indent);
+      const paramIndent = indentStr() + ' '.repeat(cfg.indent);
 
       return {
         indent: paramIndent,
