@@ -19,6 +19,21 @@ const JOIN_KEYWORDS = new Set([
   'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER', 'CROSS', 'NATURAL',
 ]);
 
+const SQL_FUNCTIONS = new Set([
+  'count', 'sum', 'max', 'min', 'avg',
+  'nvl', 'nvl2', 'decode', 'coalesce', 'nullif', 'greatest', 'least',
+  'to_char', 'to_date', 'to_number', 'to_timestamp', 'to_clob', 'to_blob',
+  'substr', 'substrb', 'length', 'lengthb', 'upper', 'lower', 'initcap',
+  'trim', 'ltrim', 'rtrim', 'lpad', 'rpad', 'replace', 'instr', 'instrb',
+  'round', 'trunc', 'mod', 'abs', 'ceil', 'floor', 'sign', 'power', 'sqrt',
+  'sysdate', 'systimestamp', 'current_date', 'current_timestamp',
+  'rank', 'dense_rank', 'row_number', 'lead', 'lag', 'first_value', 'last_value',
+  'listagg', 'xmlagg', 'cast', 'convert',
+  'regexp_like', 'regexp_substr', 'regexp_replace', 'regexp_instr', 'regexp_count',
+  'sys_guid', 'uid', 'user', 'userenv', 'dump', 'vsize',
+  'sys_connect_by_path', 'connect_by_root',
+]);
+
 function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = false, lowerFunctions = true): string {
   const parts: string[] = [];
   let prevMeaningful: Token | null = null;
@@ -33,18 +48,18 @@ function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = fals
     }
 
     let val: string;
-    if (lowerFunctions && t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN) {
-      // SQL function call: lowercase the function name (e.g. count, max, nvl)
+    if (t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN
+        && SQL_FUNCTIONS.has(t.raw.toLowerCase())) {
       val = t.raw.toLowerCase();
     } else if (lowerAliases && t.type === TokenType.IDENTIFIER) {
-      // Alias definition: IDENTIFIER or RPAREN or (AS keyword) → next IDENTIFIER is alias
-      const isAliasDef = prevMeaningful !== null && (
+      // Only treat as alias if it has no underscores (PL/SQL variables always have underscores)
+      const isPLSQLVar = t.raw.includes('_');
+      const isAliasDef = !isPLSQLVar && prevMeaningful !== null && (
         prevMeaningful.type === TokenType.IDENTIFIER ||
         prevMeaningful.type === TokenType.RPAREN ||
         (prevMeaningful.type === TokenType.KEYWORD && prevMeaningful.value === 'AS')
       );
-      // Alias qualifier: IDENTIFIER followed by DOT (e.g. T.column_name)
-      const isAliasQualifier = next?.type === TokenType.DOT;
+      const isAliasQualifier = !isPLSQLVar && next?.type === TokenType.DOT;
       val = (isAliasDef || isAliasQualifier) ? t.raw.toLowerCase() : applyCasing(t, cfg);
     } else {
       val = applyCasing(t, cfg);
@@ -63,8 +78,12 @@ function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = fals
         t.type === TokenType.DOT
       ) {
         // no space
-      } else if (next.type === TokenType.LPAREN && (t.type === TokenType.IDENTIFIER || t.type === TokenType.KEYWORD)) {
+      } else if (next.type === TokenType.LPAREN && t.type === TokenType.IDENTIFIER) {
         // function call: no space before (
+      } else if (next.type === TokenType.LPAREN && t.type === TokenType.KEYWORD && t.value !== 'IN' && t.value !== 'NOT') {
+        // keyword followed by ( — no space, except IN/NOT IN which need space
+      } else if (next.raw.startsWith('%')) {
+        // no space before %TYPE, %ROWTYPE, etc.
       } else {
         parts.push(' ');
       }
@@ -146,17 +165,65 @@ function formatTokensWithSubqueries(
       continue;
     }
 
+    // Detect paren group with AND/OR for multi-line expansion
+    if (t.type === TokenType.LPAREN) {
+      const inner: Token[] = [];
+      let depth = 1;
+      let k = i + 1;
+      while (k < tokens.length) {
+        const tok = tokens[k];
+        if (tok.type === TokenType.LPAREN) depth++;
+        else if (tok.type === TokenType.RPAREN) { depth--; if (depth === 0) break; }
+        inner.push(tok);
+        k++;
+      }
+      const andOrParts = splitOnAndOr(inner);
+      if (andOrParts.length > 1) {
+        const innerCol = col + 1;
+        const innerIndent = ' '.repeat(innerCol);
+        const renderedLines: string[] = [];
+        for (let pi = 0; pi < andOrParts.length; pi++) {
+          const p = andOrParts[pi];
+          const nextConnector = andOrParts[pi + 1]?.connector ?? '';
+          // AND is leading (start of next line), OR is trailing (end of current line)
+          const andKw = p.connector === 'AND' ? applyKeywordCase('AND', cfg) + ' ' : '';
+          const partCol = innerCol + andKw.length;
+          const str = formatTokensWithSubqueries(p.tokens, cfg, partCol, lowerAliases);
+          let line = pi === 0 ? str : `${innerIndent}${andKw}${str}`;
+          if (nextConnector === 'OR') line += ' ' + applyKeywordCase('OR', cfg);
+          renderedLines.push(line);
+        }
+        const lastLine = renderedLines[renderedLines.length - 1] + ')';
+        out.push('(' + renderedLines.join('\n') + ')');
+        col = lastLine.length;
+        i = k + 1;
+        prevMeaningful = { type: TokenType.RPAREN, raw: ')', value: ')', line: 0, col: 0 };
+        if (i < tokens.length) {
+          const aft = tokens[i];
+          if (aft.type !== TokenType.COMMA && aft.type !== TokenType.RPAREN &&
+              aft.type !== TokenType.SEMICOLON && aft.type !== TokenType.DOT) {
+            out.push(' ');
+            col++;
+          }
+        }
+        continue;
+      }
+      // else: fall through to regular LPAREN processing
+    }
+
     // Regular token — mirror tokensToStr casing logic
     let val: string;
-    if (t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN) {
-      val = t.raw.toLowerCase(); // SQL function call
+    if (t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN
+        && SQL_FUNCTIONS.has(t.raw.toLowerCase())) {
+      val = t.raw.toLowerCase();
     } else if (lowerAliases && t.type === TokenType.IDENTIFIER) {
-      const isAliasDef = prevMeaningful !== null && (
+      const isPLSQLVar = t.raw.includes('_');
+      const isAliasDef = !isPLSQLVar && prevMeaningful !== null && (
         prevMeaningful.type === TokenType.IDENTIFIER ||
         prevMeaningful.type === TokenType.RPAREN ||
         (prevMeaningful.type === TokenType.KEYWORD && prevMeaningful.value === 'AS')
       );
-      const isAliasQualifier = next?.type === TokenType.DOT;
+      const isAliasQualifier = !isPLSQLVar && next?.type === TokenType.DOT;
       val = (isAliasDef || isAliasQualifier) ? t.raw.toLowerCase() : applyCasing(t, cfg);
     } else {
       val = applyCasing(t, cfg);
@@ -174,7 +241,8 @@ function formatTokensWithSubqueries(
         next.type === TokenType.SEMICOLON ||
         next.type === TokenType.DOT ||
         t.type === TokenType.DOT ||
-        (next.type === TokenType.LPAREN && (t.type === TokenType.IDENTIFIER || t.type === TokenType.KEYWORD))
+        (next.type === TokenType.LPAREN && t.type === TokenType.IDENTIFIER) ||
+        (next.type === TokenType.LPAREN && t.type === TokenType.KEYWORD && t.value !== 'IN' && t.value !== 'NOT')
       ) {
         // no space
       } else {
@@ -316,12 +384,12 @@ function formatSelect(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
       }
 
     } else if (clause.keyword === 'CONNECT') {
-      const padded = padKeyword(kw + ' BY', kwWidth, cfg.dml.leftAlignKeywords);
+      const padded = padKeyword(kw + ' ' + applyKeywordCase('BY', cfg), kwWidth, cfg.dml.leftAlignKeywords);
       const restTokens = clause.tokens[0]?.value === 'BY' ? clause.tokens.slice(1) : clause.tokens;
       lines.push(`${baseIndent}${padded} ${tokensToStr(restTokens, cfg)}`);
 
     } else if (clause.keyword === 'START') {
-      const padded = padKeyword(kw + ' WITH', kwWidth, cfg.dml.leftAlignKeywords);
+      const padded = padKeyword(kw + ' ' + applyKeywordCase('WITH', cfg), kwWidth, cfg.dml.leftAlignKeywords);
       const restTokens = clause.tokens[0]?.value === 'WITH' ? clause.tokens.slice(1) : clause.tokens;
       lines.push(`${baseIndent}${padded} ${tokensToStr(restTokens, cfg)}`);
 
@@ -359,8 +427,11 @@ function formatFromClause(
           const afterOn  = j.tokens.slice(onIdx + 1);
           lines.push(`${baseIndent}${padded} ${tokensToStr(beforeOn, cfg, true)}`);
           const onPadded = padKeyword(applyKeywordCase('ON', cfg), kwWidth, cfg.dml.leftAlignKeywords);
-          // Use formatWhereClause to split AND/OR conditions in ON clause
-          lines.push(...formatWhereClause(afterOn, cfg, baseIndent, onPadded, kwWidth));
+          // AND in ON clause right-aligned to kwWidth so data aligns with ON data
+          const onAndOrIndent = cfg.dml.leftAlignKeywords
+            ? baseIndent
+            : baseIndent + ' '.repeat(Math.max(0, kwWidth - applyKeywordCase('AND', cfg).length));
+          lines.push(...formatWhereClause(afterOn, cfg, baseIndent, onPadded, kwWidth, onAndOrIndent));
         } else {
           lines.push(`${baseIndent}${padded} ${tokensToStr(j.tokens, cfg, true)}`);
         }
@@ -374,7 +445,8 @@ function formatFromClause(
 
 function formatWhereClause(
   tokens: Token[], cfg: BeautifierConfig,
-  baseIndent: string, wherePadded: string, kwWidth: number
+  baseIndent: string, wherePadded: string, kwWidth: number,
+  overrideAndOrIndent?: string
 ): string[] {
   if (!cfg.dml.where.splitAndOr || tokens.length === 0) {
     const prefix = `${baseIndent}${wherePadded} `;
@@ -382,7 +454,7 @@ function formatWhereClause(
   }
 
   const lines: string[] = [];
-  const andOrIndent = computeAndOrIndent(wherePadded, kwWidth, baseIndent, cfg);
+  const andOrIndent = overrideAndOrIndent ?? computeAndOrIndent(wherePadded, kwWidth, baseIndent, cfg);
 
   // Split on top-level AND/OR (not inside parentheses)
   const parts = splitOnAndOr(tokens);
@@ -691,6 +763,11 @@ function splitIntoClauses(tokens: Token[]): DMLClause[] {
     else if (t.type === TokenType.RPAREN) depth--;
 
     if (depth === 0 && t.type === TokenType.KEYWORD && DML_CLAUSE_KEYWORDS.has(t.value)) {
+      // START WITH: don't split on WITH when current clause is START
+      if (t.value === 'WITH' && currentKw === 'START') {
+        currentTokens.push(t);
+        continue;
+      }
       // Check if this is a subquery SELECT - preceded by (
       const prevNonWs = currentTokens[currentTokens.length - 1];
       if (t.value === 'SELECT' && prevNonWs?.type !== TokenType.LPAREN) {

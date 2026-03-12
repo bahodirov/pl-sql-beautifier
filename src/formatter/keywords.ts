@@ -27,6 +27,7 @@ export const BLOCK_KEYWORDS = new Set([
 
 export const DML_KEYWORDS = new Set([
   'SELECT', 'FROM', 'WHERE', 'HAVING',
+  'GROUP', 'ORDER', 'BY',
   'INSERT', 'INTO', 'VALUES',
   'UPDATE', 'SET',
   'DELETE',

@@ -48,17 +48,13 @@ export function alignAssignments(lines: AssignLine[]): string[] {
 
 export function alignParams(lines: ParamLine[]): string[] {
   const maxNameLen = Math.max(...lines.map(l => l.name.length));
-  const maxDirLen  = Math.max(...lines.map(l => l.direction.length));
-  const maxTypeLen = Math.max(...lines.map(l => l.dataType.length));
 
-  return lines.map((l, i) => {
-    const name  = l.name.padEnd(maxNameLen);
-    const dir   = maxDirLen > 0 ? ' ' + l.direction.padEnd(maxDirLen) : '';
-    const type  = maxTypeLen > 0 ? ' ' + (i < lines.length - 1 || lines.some(x => x.defaultVal)
-      ? l.dataType.padEnd(maxTypeLen)
-      : l.dataType) : '';
-    const def   = l.defaultVal ? ` := ${l.defaultVal}` : '';
-    const comma = l.hasComma ? ',' : '';
+  return lines.map(l => {
+    const name    = l.name.padEnd(maxNameLen);
+    const dir     = l.direction ? ' ' + l.direction : '';
+    const type    = l.dataType  ? ' ' + l.dataType  : '';
+    const def     = l.defaultVal ? ` := ${l.defaultVal}` : '';
+    const comma   = l.hasComma ? ',' : '';
     const comment = l.comment ? `  ${l.comment}` : '';
     const base = (`${l.indent}${name}${dir}${type}${def}`).trimEnd();
     return base + comma + comment;

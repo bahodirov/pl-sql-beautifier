@@ -117,7 +117,8 @@ export function format(src: string, cfg: BeautifierConfig): string {
           next.type === TokenType.DOT ||
           t.type === TokenType.DOT ||
           (next.type === TokenType.LPAREN && t.type === TokenType.IDENTIFIER) ||
-          (next.type === TokenType.LPAREN && t.type === TokenType.KEYWORD)
+          (next.type === TokenType.LPAREN && t.type === TokenType.KEYWORD && t.value !== 'IN' && t.value !== 'NOT') ||
+          next.raw.startsWith('%')
         ) {
           // no space
         } else if (
@@ -211,8 +212,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
         declGroup = [];
         const blanks = blanksMap.get(pos) ?? 0;
         const commentRaw = consume().raw;
-        const isSep = t.type === TokenType.LINE_COMMENT && isSeparatorComment(commentRaw);
-        emit(indentStr() + commentRaw, isSep ? Math.max(blanks, 1) : blanks);
+        emit(indentStr() + commentRaw, blanks);
         continue;
       }
 
@@ -363,16 +363,16 @@ export function format(src: string, cfg: BeautifierConfig): string {
   }
 
   function processBeginBlock(isTopLevel = false): void {
+    let firstStatement = true;
     while (!isDone()) {
       const t = peek();
-      const blanks = blanksMap.get(pos) ?? 0;
+      const blanks = firstStatement ? 0 : (blanksMap.get(pos) ?? 0);
 
       if (t.type === TokenType.LINE_COMMENT || t.type === TokenType.BLOCK_COMMENT) {
         flushAssignGroup(assignGroup);
         assignGroup = [];
         const commentRaw = consume().raw;
-        const isSep = t.type === TokenType.LINE_COMMENT && isSeparatorComment(commentRaw);
-        emit(indentStr() + commentRaw, isSep ? Math.max(blanks, 1) : blanks);
+        emit(indentStr() + commentRaw, blanks);
         continue;
       }
 
@@ -387,6 +387,8 @@ export function format(src: string, cfg: BeautifierConfig): string {
       if (t.value === 'ELSE' && t.type === TokenType.KEYWORD) break;
       if (t.value === 'WHEN' && t.type === TokenType.KEYWORD) break;
       if (t.type === TokenType.EOF) break;
+
+      firstStatement = false;
 
       // ── IF statement ──
       if (t.value === 'IF' && t.type === TokenType.KEYWORD) {
@@ -547,12 +549,12 @@ export function format(src: string, cfg: BeautifierConfig): string {
         continue;
       }
 
-      // ── RETURN statement: ensure at least one blank line before ──
+      // ── RETURN statement ──
       if (t.value === 'RETURN' && t.type === TokenType.KEYWORD) {
         flushAssignGroup(assignGroup);
         assignGroup = [];
         const stmt = collectUntil(tok => tok.type === TokenType.SEMICOLON, true);
-        emit(indentStr() + inlineTokens(stmt), Math.max(blanks, 1));
+        emit(indentStr() + inlineTokens(stmt), blanks);
         continue;
       }
 
@@ -608,15 +610,15 @@ export function format(src: string, cfg: BeautifierConfig): string {
     j++; // past LPAREN
     // Scan args, track depth, look for comma at depth 0
     let depth = 0;
-    let hasComma = false;
+    let commaCount = 0;
     for (; j < toks.length; j++) {
       const tok = toks[j];
       if (tok.type === TokenType.RPAREN && depth === 0) { j++; break; }
       if (tok.type === TokenType.LPAREN) depth++;
       else if (tok.type === TokenType.RPAREN) depth--;
-      else if (depth === 0 && tok.type === TokenType.COMMA) hasComma = true;
+      else if (depth === 0 && tok.type === TokenType.COMMA) commaCount++;
     }
-    if (!hasComma) return false;
+    if (commaCount < 2) return false;
     // Ensure nothing meaningful follows the closing paren (only semicolons allowed)
     for (; j < toks.length; j++) {
       if (toks[j].type !== TokenType.SEMICOLON) return false;
@@ -665,7 +667,20 @@ export function format(src: string, cfg: BeautifierConfig): string {
     // Column where the first argument starts (one past the opening parenthesis)
     const argStartCol = prefixLen + funcName.length + 1;
     const argIndent   = ' '.repeat(argStartCol);
-    const formattedArgs = argGroups.map(g => inlineTokens(g));
+
+    // Check if all args use named notation (param => value)
+    const isNamed = argGroups.every(g => g.length >= 2 && g[1].type === TokenType.ARROW_OP);
+    let formattedArgs: string[];
+    if (isNamed) {
+      const maxNameLen = Math.max(...argGroups.map(g => inlineTokens([g[0]]).length));
+      formattedArgs = argGroups.map(g => {
+        const name = inlineTokens([g[0]]).padEnd(maxNameLen);
+        const val  = inlineTokens(g.slice(2));
+        return `${name} => ${val}`;
+      });
+    } else {
+      formattedArgs = argGroups.map(g => inlineTokens(g));
+    }
 
     let result = funcName + '(' + formattedArgs[0] + ',\n';
     for (let k = 1; k < formattedArgs.length; k++) {
@@ -1055,6 +1070,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
       if (peek().type === TokenType.KEYWORD || peek().type === TokenType.IDENTIFIER) {
         const subKw = consume();
         // Check for PACKAGE BODY
+        const isPackageBody = subKw.value === 'PACKAGE';
         let objectType = applyKeywordCase(subKw.value, cfg);
         if (subKw.value === 'PACKAGE' && peek().value === 'BODY') {
           objectType += ' ' + applyKeywordCase(consume().value, cfg);
@@ -1111,7 +1127,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
             endLabel = ' ' + applyIdentifierCase(consume().raw, cfg);
           }
           if (peek().type === TokenType.SEMICOLON) consume();
-          emit(applyKeywordCase('END', cfg) + endLabel + ';');
+          emit(applyKeywordCase('END', cfg) + endLabel + ';', isPackageBody ? 1 : 0);
         }
       }
       // Skip trailing /
