@@ -117,7 +117,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
           next.type === TokenType.DOT ||
           t.type === TokenType.DOT ||
           (next.type === TokenType.LPAREN && t.type === TokenType.IDENTIFIER) ||
-          (next.type === TokenType.LPAREN && t.type === TokenType.KEYWORD && t.value !== 'IN' && t.value !== 'NOT') ||
+          (next.type === TokenType.LPAREN && t.type === TokenType.KEYWORD && t.value !== 'IN' && t.value !== 'NOT' && t.value !== 'EXISTS') ||
           next.raw.startsWith('%')
         ) {
           // no space
@@ -170,7 +170,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
         const l = g.line;
         const typeWithConstraint = l.constraint ? `${l.constraint} ${l.dataType}` : l.dataType;
         const def = l.defaultVal ? ` := ${l.defaultVal}` : '';
-        const comment = l.comment ? `  ${l.comment}` : '';
+        const comment = l.comment ? ` ${l.comment}` : '';
         emit(`${indent}${l.identifier} ${typeWithConstraint}${def}${l.semicolon}${comment}`, g.blankBefore);
       }
     }
@@ -191,7 +191,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
     } else {
       for (const g of group) {
         const l = g.line;
-        emit(`${l.indent}${l.lhs} := ${l.rhs};${l.comment ? '  ' + l.comment : ''}`, g.blankBefore);
+        emit(`${l.indent}${l.lhs} := ${l.rhs};${l.comment ? ' ' + l.comment : ''}`, g.blankBefore);
       }
     }
   }
@@ -539,7 +539,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
           assignGroup = [];
           const prefixLen = indentStr().length + lhs.length + ' := '.length;
           const rhs = formatCallWithBreaking(rhsToks, prefixLen);
-          const commentStr = comment ? `  ${comment}` : '';
+          const commentStr = comment ? ` ${comment}` : '';
           emit(`${indentStr()}${lhs} := ${rhs};${commentStr}`, blanks);
         } else {
           const rhs = inlineTokens(rhsToks);
@@ -554,7 +554,17 @@ export function format(src: string, cfg: BeautifierConfig): string {
         flushAssignGroup(assignGroup);
         assignGroup = [];
         const stmt = collectUntil(tok => tok.type === TokenType.SEMICOLON, true);
-        emit(indentStr() + inlineTokens(stmt), blanks);
+        // stmt = [RETURN, ...expr..., ;]
+        const hasSemi = stmt[stmt.length - 1]?.type === TokenType.SEMICOLON;
+        const exprToks = stmt.slice(1, hasSemi ? -1 : undefined);
+        if (hasMultipleCallArgs(exprToks)) {
+          const returnKw = applyKeywordCase('RETURN', cfg);
+          const prefixLen = indentStr().length + returnKw.length + 1;
+          const formatted = formatCallWithBreaking(exprToks, prefixLen);
+          emit(`${indentStr()}${returnKw} ${formatted};`, blanks);
+        } else {
+          emit(indentStr() + inlineTokens(stmt), blanks);
+        }
         continue;
       }
 
@@ -690,6 +700,34 @@ export function format(src: string, cfg: BeautifierConfig): string {
     return result;
   }
 
+  // Split boolean condition on AND/OR at depth 0 for IF/ELSIF conditions
+  function formatBoolCond(condTokens: Token[], contCol: number): string {
+    if (!cfg.splitAndOr) return inlineTokens(condTokens);
+    const contIndent = ' '.repeat(contCol);
+    const parts: Token[][] = [];
+    let cur: Token[] = [];
+    let depth = 0;
+    for (const tok of condTokens) {
+      if (tok.type === TokenType.LPAREN) depth++;
+      else if (tok.type === TokenType.RPAREN) depth--;
+      if (depth === 0 && (tok.value === 'AND' || tok.value === 'OR') && tok.type === TokenType.KEYWORD) {
+        if (cfg.andOrAfterExpression) {
+          cur.push(tok);
+          parts.push(cur);
+          cur = [];
+        } else {
+          parts.push(cur);
+          cur = [tok];
+        }
+      } else {
+        cur.push(tok);
+      }
+    }
+    if (cur.length > 0) parts.push(cur);
+    if (parts.length <= 1) return inlineTokens(condTokens);
+    return parts.map((p, i) => i === 0 ? inlineTokens(p) : contIndent + inlineTokens(p)).join('\n');
+  }
+
   function processIf(blankBefore: number): void {
     consume(); // IF
     const condTokens = collectUntil(tok => tok.value === 'THEN' && tok.type === TokenType.KEYWORD);
@@ -697,9 +735,11 @@ export function format(src: string, cfg: BeautifierConfig): string {
 
     const ifKw = applyKeywordCase('IF', cfg);
     const thenKw = applyKeywordCase('THEN', cfg);
-    const cond = inlineTokens(condTokens);
+    const contCol = indentStr().length + ifKw.length + 1;
+    const cond = formatBoolCond(condTokens, contCol);
+    const isMultiLine = cond.includes('\n');
 
-    if (cfg.thenOnNewLine) {
+    if (cfg.thenOnNewLine || isMultiLine) {
       emit(indentStr() + ifKw + ' ' + cond, blankBefore);
       emit(indentStr() + thenKw);
     } else {
@@ -718,11 +758,14 @@ export function format(src: string, cfg: BeautifierConfig): string {
         const elsifCond = collectUntil(tok => tok.value === 'THEN' && tok.type === TokenType.KEYWORD);
         consume(); // THEN
         const elsifKw = applyKeywordCase('ELSIF', cfg);
-        if (cfg.thenOnNewLine) {
-          emit(indentStr() + elsifKw + ' ' + inlineTokens(elsifCond));
+        const elsifContCol = indentStr().length + elsifKw.length + 1;
+        const elsifCond2 = formatBoolCond(elsifCond, elsifContCol);
+        const elsifMultiLine = elsifCond2.includes('\n');
+        if (cfg.thenOnNewLine || elsifMultiLine) {
+          emit(indentStr() + elsifKw + ' ' + elsifCond2);
           emit(indentStr() + thenKw);
         } else {
-          emit(indentStr() + elsifKw + ' ' + inlineTokens(elsifCond) + ' ' + thenKw);
+          emit(indentStr() + elsifKw + ' ' + elsifCond2 + ' ' + thenKw);
         }
         push(Context.BEGIN_BLOCK);
         processBeginBlock();

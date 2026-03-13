@@ -37,6 +37,8 @@ function initCapWords(str: string, sep: string): string {
       if (part.length === 0) return '';
       // Single-char first segment with underscore separator (v_, i_, c_, g_, etc.) stays lowercase
       if (sep === '_' && idx === 0 && part.length === 1) return part.toLowerCase();
+      // Single-char non-first segment: preserve original case (_t stays _t, not _T)
+      if (sep === '_' && part.length === 1) return part;
       return part[0].toUpperCase() + part.slice(1).toLowerCase();
     })
     .join(sep);

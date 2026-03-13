@@ -57,7 +57,6 @@ export const DEFAULT_CONFIG: BeautifierConfig = {
     ['function', 'Function'],
     ['out', 'out'],
     ['procedure', 'Procedure'],
-    ['result', 'result'],
     ['to_char', 'to_char'],
     ['to_date', 'to_date'],
     ['to_number', 'to_number'],
