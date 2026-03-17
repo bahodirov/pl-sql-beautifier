@@ -7,12 +7,13 @@ import { applyIdentifierCase, applyKeywordCase, applyCasing } from './casing';
 const DML_CLAUSE_KEYWORDS = new Set([
   'SELECT', 'FROM', 'WHERE', 'HAVING',
   'GROUP', 'ORDER', 'CONNECT', 'START',
-  'INTO',   // INSERT INTO
+  'INTO',   // INSERT INTO / BULK COLLECT INTO
   'VALUES',
   'SET',    // UPDATE SET
   'MERGE', 'USING', 'MATCHED',
   'UNION', 'INTERSECT', 'MINUS',
   'WITH',
+  'BULK',   // BULK COLLECT INTO
 ]);
 
 const JOIN_KEYWORDS = new Set([
@@ -374,7 +375,7 @@ function formatSelect(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
       let fullKw = kw;
       let restTokens = clause.tokens;
       if (clause.tokens[0]?.value === 'ALL') {
-        fullKw = kw + ' ALL';
+        fullKw = kw + ' ' + applyKeywordCase('ALL', cfg);
         restTokens = clause.tokens.slice(1);
       }
       lines.push(`${baseIndent}${fullKw}`);

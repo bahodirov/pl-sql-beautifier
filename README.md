@@ -33,22 +33,10 @@ Or right-click → **Format Document** → **Format Document With...** → **PL/
 
 ## Configuration
 
-### Option 1: Use your PL/SQL Developer config file (Recommended)
-
-In VSCode Settings (`Ctrl+,`), search for **plsqlBeautifier**:
-
-- **`plsqlBeautifier.configFile`** — Full path to your `.br` file:
-  ```
-  C:\path\to\your\plsqbeautifier.br
-  ```
-
-- **`plsqlBeautifier.searchWorkspaceForBrFile`** — When `true` (default), automatically searches the workspace root folder for a `.br` file.
-
-### Option 2: Built-in defaults
-
-If no `.br` file is configured or found, the extension uses sensible defaults:
-- Keywords: UPPERCASE
-- Identifiers: Init_Cap (e.g. `Get_Local_Code`)
+The extension works out of the box with no configuration needed. Built-in defaults:
+- Keywords: lowercase (e.g. `select`, `begin`, `return`)
+- Identifiers: lowercase (e.g. `v_result`, `i_filial_id`)
+- Special words: `Function`, `Procedure` (capitalized)
 - Indent: 2 spaces
 - Blank lines: max 1
 - DML keywords: right-aligned
@@ -71,28 +59,28 @@ end;
 
 **After:**
 ```sql
-CREATE OR REPLACE Function Get_Local_Code
+create or replace Function get_local_code
 (
-  i_Filial_Id    number,
-  i_Source_Code  varchar2
-) RETURN varchar2 IS
-  v_Result         varchar2(100);
-  v_Use_Local_Code boolean := false;
-BEGIN
-  v_Use_Local_Code := Pkg.Get_Flag(i_Company_Id => v_Company_Id,
-                                   i_Filial_Id => v_Filial_Id);
+  i_filial_id    number,
+  i_source_code  varchar2
+) return varchar2 is
+  v_result         varchar2(100);
+  v_use_local_code boolean := false;
+begin
+  v_use_local_code := pkg.get_flag(i_company_id => v_company_id,
+                                   i_filial_id => v_filial_id);
 
-  SELECT t.Local_Code
-    INTO v_Result
-    FROM Mrf_Local_Codes t
-   WHERE t.Filial_Id = i_Filial_Id
-     AND t.Source_Code = i_Source_Code;
+  select t.local_code
+    into v_result
+    from mrf_local_codes t
+   where t.filial_id = i_filial_id
+     and t.source_code = i_source_code;
 
-  RETURN v_Result;
-EXCEPTION
-  WHEN No_Data_Found THEN
-    RETURN NULL;
-END;
+  return v_result;
+exception
+  when no_data_found then
+    return null;
+end;
 ```
 
 ## Supported File Types

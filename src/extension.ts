@@ -1,7 +1,5 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { format, parseBrFile, DEFAULT_CONFIG, BeautifierConfig } from './formatter';
+import { format, DEFAULT_CONFIG } from './formatter';
 
 const SUPPORTED_LANGS = ['sql', 'plsql', 'oraclesql', 'oracle-sql'];
 
@@ -26,7 +24,7 @@ class PlsqlFormattingProvider
 
   private doFormat(document: vscode.TextDocument, range: vscode.Range | null): vscode.TextEdit[] {
     try {
-      const cfg = loadConfig(document);
+      const cfg = DEFAULT_CONFIG;
       const text = range ? document.getText(range) : document.getText();
       const formatted = format(text, cfg);
       const editRange = range ?? new vscode.Range(
@@ -42,48 +40,6 @@ class PlsqlFormattingProvider
   }
 }
 
-function loadConfig(document: vscode.TextDocument): BeautifierConfig {
-  const settings = vscode.workspace.getConfiguration('plsqlBeautifier');
-  const explicitPath = settings.get<string>('configFile', '');
-
-  if (explicitPath && fs.existsSync(explicitPath)) {
-    try {
-      return parseBrFile(explicitPath);
-    } catch {
-      vscode.window.showWarningMessage(`PL/SQL Beautifier: could not parse config file "${explicitPath}", using defaults.`);
-    }
-  }
-
-  if (settings.get<boolean>('searchWorkspaceForBrFile', true)) {
-    const ws = vscode.workspace.getWorkspaceFolder(document.uri);
-    if (ws) {
-      const found = findBrFile(ws.uri.fsPath);
-      if (found) {
-        try {
-          return parseBrFile(found);
-        } catch {
-          // fall through to defaults
-        }
-      }
-    }
-  }
-
-  return DEFAULT_CONFIG;
-}
-
-function findBrFile(dir: string): string | null {
-  try {
-    const entries = fs.readdirSync(dir);
-    for (const entry of entries) {
-      if (entry.toLowerCase().endsWith('.br')) {
-        return path.join(dir, entry);
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new PlsqlFormattingProvider();

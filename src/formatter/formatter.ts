@@ -533,11 +533,11 @@ export function format(src: string, cfg: BeautifierConfig): string {
 
         const lhs = inlineTokens(lhsToks);
 
-        if (hasMultipleCallArgs(rhsToks)) {
+        const prefixLen = indentStr().length + lhs.length + ' := '.length;
+        if (hasMultipleCallArgs(rhsToks) || hasBreakableCall(rhsToks)) {
           // Multi-arg function call: flush pending group and emit with line breaks
           flushAssignGroup(assignGroup);
           assignGroup = [];
-          const prefixLen = indentStr().length + lhs.length + ' := '.length;
           const rhs = formatCallWithBreaking(rhsToks, prefixLen);
           const commentStr = comment ? ` ${comment}` : '';
           emit(`${indentStr()}${lhs} := ${rhs};${commentStr}`, blanks);
@@ -576,7 +576,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
         // stmt ends with ';' — check if it's a multi-arg procedure call
         const stmtBody = stmt[stmt.length - 1]?.type === TokenType.SEMICOLON
           ? stmt.slice(0, -1) : stmt;
-        if (hasMultipleCallArgs(stmtBody)) {
+        if (hasMultipleCallArgs(stmtBody) || hasBreakableCall(stmtBody)) {
           const prefixLen = indentStr().length;
           const formatted = formatCallWithBreaking(stmtBody, prefixLen);
           emit(`${indentStr()}${formatted};`, blanks);
@@ -603,6 +603,28 @@ export function format(src: string, cfg: BeautifierConfig): string {
     return false;
   }
 
+  // Check if any sub-sequence of toks forms a named call with 2+ args (or positional 3+).
+  function hasBreakableCall(toks: Token[]): boolean {
+    for (let i = 0; i < toks.length; i++) {
+      if (toks[i].type !== TokenType.IDENTIFIER) continue;
+      let j = i + 1;
+      while (j + 1 < toks.length && toks[j].type === TokenType.DOT && toks[j + 1].type === TokenType.IDENTIFIER) j += 2;
+      if (j >= toks.length || toks[j].type !== TokenType.LPAREN) continue;
+      j++;
+      let depth = 0, commas = 0, named = false;
+      for (let k = j; k < toks.length; k++) {
+        const tok = toks[k];
+        if (tok.type === TokenType.RPAREN && depth === 0) break;
+        if (tok.type === TokenType.LPAREN) depth++;
+        else if (tok.type === TokenType.RPAREN) depth--;
+        else if (depth === 0 && tok.type === TokenType.COMMA) commas++;
+        else if (depth === 0 && tok.type === TokenType.ARROW_OP) named = true;
+      }
+      if (commas >= (named ? 1 : 2)) return true;
+    }
+    return false;
+  }
+
   // Check if toks is a standalone function/procedure call with 2+ arguments.
   // Returns false if there are meaningful tokens after the closing parenthesis.
   function hasMultipleCallArgs(toks: Token[]): boolean {
@@ -621,14 +643,18 @@ export function format(src: string, cfg: BeautifierConfig): string {
     // Scan args, track depth, look for comma at depth 0
     let depth = 0;
     let commaCount = 0;
+    let isNamed = false;
     for (; j < toks.length; j++) {
       const tok = toks[j];
       if (tok.type === TokenType.RPAREN && depth === 0) { j++; break; }
       if (tok.type === TokenType.LPAREN) depth++;
       else if (tok.type === TokenType.RPAREN) depth--;
       else if (depth === 0 && tok.type === TokenType.COMMA) commaCount++;
+      else if (depth === 0 && tok.type === TokenType.ARROW_OP) isNamed = true;
     }
-    if (commaCount < 2) return false;
+    // Named notation (param => value): break at 2+ args; positional: break at 3+ args
+    const minCommas = isNamed ? 1 : 2;
+    if (commaCount < minCommas) return false;
     // Ensure nothing meaningful follows the closing paren (only semicolons allowed)
     for (; j < toks.length; j++) {
       if (toks[j].type !== TokenType.SEMICOLON) return false;
@@ -671,7 +697,13 @@ export function format(src: string, cfg: BeautifierConfig): string {
     if (curGroup.length > 0) argGroups.push(curGroup);
 
     if (argGroups.length <= 1) {
-      return inlineTokens(toks); // single arg — keep inline
+      // Single arg — recurse into it if it contains a breakable nested call
+      if (argGroups.length === 1 && hasBreakableCall(argGroups[0])) {
+        const innerPrefixLen = prefixLen + funcName.length + 1;
+        const innerFormatted = formatCallWithBreaking(argGroups[0], innerPrefixLen);
+        return funcName + '(' + innerFormatted + ')';
+      }
+      return inlineTokens(toks); // single arg with no breakable nested — keep inline
     }
 
     // Column where the first argument starts (one past the opening parenthesis)
@@ -685,7 +717,11 @@ export function format(src: string, cfg: BeautifierConfig): string {
       const maxNameLen = Math.max(...argGroups.map(g => inlineTokens([g[0]]).length));
       formattedArgs = argGroups.map(g => {
         const name = inlineTokens([g[0]]).padEnd(maxNameLen);
-        const val  = inlineTokens(g.slice(2));
+        const valToks = g.slice(2);
+        const valCol = argStartCol + maxNameLen + 4; // ' => '.length === 4
+        const val = hasMultipleCallArgs(valToks) || hasBreakableCall(valToks)
+          ? formatCallWithBreaking(valToks, valCol)
+          : inlineTokens(valToks);
         return `${name} => ${val}`;
       });
     } else {

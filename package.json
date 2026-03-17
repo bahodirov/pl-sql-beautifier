@@ -2,7 +2,7 @@
   "name": "plsql-beautifier",
   "displayName": "PL/SQL Beautifier",
   "description": "Format PL/SQL / SQL code using PL/SQL Developer-compatible beautifier settings",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "Dilshod",
   "license": "MIT",
   "repository": {
@@ -25,21 +25,6 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "PL/SQL Beautifier",
-      "properties": {
-        "plsqlBeautifier.configFile": {
-          "type": "string",
-          "default": "",
-          "description": "Path to a PL/SQL Developer .br config file. Leave empty to use built-in defaults."
-        },
-        "plsqlBeautifier.searchWorkspaceForBrFile": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically search the workspace root for a .br config file."
-        }
-      }
-    },
     "commands": [
       {
         "command": "plsqlBeautifier.formatDocument",

@@ -49,8 +49,8 @@ export const DEFAULT_CONFIG: BeautifierConfig = {
   tabCharacterSize: 2,
   alignDeclarationGroups: true,
   alignAssignmentGroups: true,
-  keywordCase: 'UPPER',
-  identifierCase: 'LOWER',
+  keywordCase: 'LOWER',
+  identifierCase: 'INIT_CAP',
   useSpecialCase: true,
   specialCaseWords: new Map([
     ['ex', 'ex'],

@@ -11,6 +11,7 @@ export enum TokenType {
   CONCAT_OP,       // ||
   ARROW_OP,        // =>
   DOT,             // .
+  DOTDOT,          // ..
   LPAREN,          // (
   RPAREN,          // )
   COMMA,           // ,

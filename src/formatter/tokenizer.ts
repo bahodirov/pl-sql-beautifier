@@ -141,7 +141,7 @@ export function tokenize(src: string): Token[] {
     // Number
     if (ch >= '0' && ch <= '9') {
       let num = '';
-      while (pos < src.length && ((peek() >= '0' && peek() <= '9') || peek() === '.')) {
+      while (pos < src.length && ((peek() >= '0' && peek() <= '9') || (peek() === '.' && peek(1) !== '.'))) {
         num += advance();
       }
       if ((peek() === 'e' || peek() === 'E') && pos < src.length) {
@@ -198,6 +198,7 @@ export function tokenize(src: string): Token[] {
     if (ch === '-') { advance(); tokens.push(makeToken(TokenType.MINUS, '-', startLine, startCol)); continue; }
     if (ch === '*') { advance(); tokens.push(makeToken(TokenType.STAR, '*', startLine, startCol)); continue; }
     if (ch === '/') { advance(); tokens.push(makeToken(TokenType.DIVIDE, '/', startLine, startCol)); continue; }
+    if (ch === '.' && peek(1) === '.') { advance(); advance(); tokens.push(makeToken(TokenType.DOTDOT, '..', startLine, startCol)); continue; }
     if (ch === '.') { advance(); tokens.push(makeToken(TokenType.DOT, '.', startLine, startCol)); continue; }
     if (ch === ',') { advance(); tokens.push(makeToken(TokenType.COMMA, ',', startLine, startCol)); continue; }
     if (ch === ';') { advance(); tokens.push(makeToken(TokenType.SEMICOLON, ';', startLine, startCol)); continue; }

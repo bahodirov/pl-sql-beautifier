@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.7] - 2026-03-17
+
+### Changed
+
+- **Keywords lowercase**: All SQL/PLSQL keywords now output in lowercase (`select`, `begin`, `end`, `return`, etc.) matching PL/SQL Developer default style.
+- **Identifiers Init_Cap**: Identifiers now use Init_Cap casing (`v_Company_Id`, `Get_Local_Code`) matching PL/SQL Developer output.
+- **`..` range operator spacing**: `for i in 1..n` is now correctly formatted as `for i in 1 .. n` with spaces around the range operator.
+- **`UNION ALL` casing**: `ALL` keyword in `UNION ALL` now correctly follows keyword case setting (outputs `union all`).
+- **Named 2-argument calls line-breaking**: Function/procedure calls using named notation (`param => value`) with 2 or more arguments are now split across multiple lines, matching PL/SQL Developer behavior.
+- **Nested call line-breaking**: Calls like `Push(Pkg.Func(i_A => a, i_B => b))` now recursively break the inner named call across lines.
+- **`BULK COLLECT` as separate clause**: `bulk collect` is now rendered on its own line in SELECT statements, matching PL/SQL Developer output.
+- **Removed `.br` file support**: Extension now uses built-in defaults only — no `.br` config file reading or workspace search.
+
 ## [0.1.4] - 2026-03-10
 
 ### Changed
