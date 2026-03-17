@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8] - 2026-03-17
+
+### Fixed
+
+- **`WITH` clause formatting**: `WITH cte AS (SELECT ...)` queries now format the inner SELECT across multiple lines instead of collapsing to one long line.
+- **Trailing newline**: Formatted output now always ends with a single newline character.
+
 ## [0.1.7] - 2026-03-17
 
 ### Changed

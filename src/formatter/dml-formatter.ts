@@ -301,6 +301,9 @@ export function formatDML(
   if (firstKw === 'MERGE') {
     return formatMerge(stmtTokens, cfg, baseIndent);
   }
+  if (firstKw === 'WITH') {
+    return formatWith(stmtTokens, cfg, baseIndent);
+  }
 
   // Fallback: just join tokens
   return baseIndent + tokensToStr(stmtTokens, cfg);
@@ -719,6 +722,67 @@ function formatDelete(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
     const whereLines = formatWhereClause(tokens.slice(i), cfg, baseIndent, whereKw, kwWidth);
     lines.push(...whereLines);
   }
+  return lines.join('\n');
+}
+
+// ─── WITH (CTE) ──────────────────────────────────────────────────────────────
+
+function formatWith(tokens: Token[], cfg: BeautifierConfig, baseIndent: string): string {
+  const withKw = applyKeywordCase('WITH', cfg);
+  const asKw   = applyKeywordCase('AS', cfg);
+  const lines: string[] = [];
+  const cteIndent = baseIndent + ' '; // one extra space for CTE subquery
+
+  let i = 1; // skip WITH token
+  let isFirst = true;
+
+  while (i < tokens.length) {
+    // CTE name
+    const nameTok = tokens[i];
+    if (!nameTok || (nameTok.type !== TokenType.IDENTIFIER && nameTok.type !== TokenType.KEYWORD)) break;
+    const cteName = applyIdentifierCase(nameTok.raw, cfg);
+    i++;
+
+    // AS
+    if (tokens[i]?.value !== 'AS') break;
+    i++;
+
+    // (SELECT ...)
+    if (tokens[i]?.type !== TokenType.LPAREN) break;
+    i++; // skip (
+    const subTokens: Token[] = [];
+    let depth = 1;
+    while (i < tokens.length) {
+      const tok = tokens[i];
+      if (tok.type === TokenType.LPAREN) depth++;
+      else if (tok.type === TokenType.RPAREN) { depth--; if (depth === 0) { i++; break; } }
+      subTokens.push(tok);
+      i++;
+    }
+
+    const hasMore = tokens[i]?.type === TokenType.COMMA;
+    const closingParen = hasMore ? '),' : ')';
+
+    const prefix = isFirst
+      ? `${baseIndent}${withKw} ${cteName} ${asKw}`
+      : `${baseIndent}${cteName} ${asKw}`;
+    lines.push(prefix);
+
+    const subResult = formatDML(subTokens, cfg, cteIndent + ' ');
+    const subLines  = subResult.split('\n');
+    subLines[0] = cteIndent + '(' + subLines[0].trimStart();
+    subLines[subLines.length - 1] += closingParen;
+    lines.push(...subLines);
+
+    isFirst = false;
+    if (hasMore) { i++; } else { break; }
+  }
+
+  // Main query (SELECT / INSERT / etc.)
+  if (i < tokens.length) {
+    lines.push(formatDML(tokens.slice(i), cfg, baseIndent));
+  }
+
   return lines.join('\n');
 }
 

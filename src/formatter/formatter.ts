@@ -444,7 +444,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
 
       // ── DML statements ──
       if ((t.value === 'SELECT' || t.value === 'INSERT' || t.value === 'UPDATE' ||
-           t.value === 'DELETE' || t.value === 'MERGE') && t.type === TokenType.KEYWORD) {
+           t.value === 'DELETE' || t.value === 'MERGE' || t.value === 'WITH') && t.type === TokenType.KEYWORD) {
         flushAssignGroup(assignGroup);
         assignGroup = [];
         // Check if SELECT INTO or cursor FOR loop
@@ -1281,7 +1281,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
     }
   }
 
-  return result.join('\n').trimEnd();
+  return result.join('\n').trimEnd() + '\n';
 }
 
 function computeBlanksBefore(tokens: Token[]): number[] {
