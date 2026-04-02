@@ -1,7 +1,7 @@
 import { Token, TokenType } from './token';
 import { BeautifierConfig } from './config';
 import { tokenize } from './tokenizer';
-import { formatDML } from './dml-formatter';
+import { formatDML, splitIntoClauses, getMaxClauseKeywordWidth } from './dml-formatter';
 import { applyKeywordCase, applyIdentifierCase } from './casing';
 import { alignDeclarations, alignAssignments, DeclLine, AssignLine, alignParams, ParamLine } from './aligner';
 
@@ -364,9 +364,12 @@ export function format(src: string, cfg: BeautifierConfig): string {
 
   function processBeginBlock(isTopLevel = false): void {
     let firstStatement = true;
+    let pendingBlanks = 0;
     while (!isDone()) {
       const t = peek();
-      const blanks = firstStatement ? 0 : (blanksMap.get(pos) ?? 0);
+      const sourceBlanks = firstStatement ? 0 : (blanksMap.get(pos) ?? 0);
+      const blanks = Math.max(sourceBlanks, pendingBlanks);
+      pendingBlanks = 0;
 
       if (t.type === TokenType.LINE_COMMENT || t.type === TokenType.BLOCK_COMMENT) {
         flushAssignGroup(assignGroup);
@@ -395,6 +398,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
         flushAssignGroup(assignGroup);
         assignGroup = [];
         processIf(blanks);
+        pendingBlanks = 1;
         continue;
       }
 
@@ -568,6 +572,41 @@ export function format(src: string, cfg: BeautifierConfig): string {
         continue;
       }
 
+      // ── EXECUTE IMMEDIATE statement ──
+      if (t.value === 'EXECUTE' && t.type === TokenType.KEYWORD &&
+          peek(1).value === 'IMMEDIATE' && peek(1).type === TokenType.KEYWORD) {
+        flushAssignGroup(assignGroup);
+        assignGroup = [];
+        consume(); // EXECUTE
+        consume(); // IMMEDIATE
+        const execKw = applyKeywordCase('EXECUTE', cfg) + ' ' + applyKeywordCase('IMMEDIATE', cfg);
+        // Collect until USING or semicolon
+        const dynToks: Token[] = [];
+        let depth = 0;
+        while (!isDone()) {
+          const nt = peek();
+          if (nt.type === TokenType.SEMICOLON) break;
+          if (depth === 0 && nt.value === 'USING' && nt.type === TokenType.KEYWORD) break;
+          if (nt.type === TokenType.LPAREN) depth++;
+          else if (nt.type === TokenType.RPAREN) depth--;
+          dynToks.push(consume());
+        }
+        const dynStr = inlineTokens(dynToks);
+        if (peek().value === 'USING' && peek().type === TokenType.KEYWORD) {
+          consume(); // USING
+          const usingToks = collectUntil(tok => tok.type === TokenType.SEMICOLON);
+          if (peek().type === TokenType.SEMICOLON) consume();
+          const usingKw = applyKeywordCase('USING', cfg);
+          const usingIndent = indentStr() + ' '.repeat(cfg.indent);
+          emit(`${indentStr()}${execKw} ${dynStr}`, blanks);
+          emit(`${usingIndent}${usingKw} ${inlineTokens(usingToks)};`);
+        } else {
+          if (peek().type === TokenType.SEMICOLON) consume();
+          emit(`${indentStr()}${execKw} ${dynStr};`, blanks);
+        }
+        continue;
+      }
+
       // ── Generic statement ──
       flushAssignGroup(assignGroup);
       assignGroup = [];
@@ -662,6 +701,90 @@ export function format(src: string, cfg: BeautifierConfig): string {
     return true;
   }
 
+  // Check if toks contains a CASE expression at depth 0.
+  function hasCaseExpr(toks: Token[]): boolean {
+    let depth = 0;
+    for (const tok of toks) {
+      if (tok.type === TokenType.LPAREN) depth++;
+      else if (tok.type === TokenType.RPAREN) depth--;
+      else if (depth === 0 && tok.value === 'CASE' && tok.type === TokenType.KEYWORD) return true;
+    }
+    return false;
+  }
+
+  // Format a CASE expression (toks starting from CASE keyword) with multi-line layout.
+  // baseIndent: the indent string for WHEN/ELSE/END lines relative to the CASE keyword position.
+  function formatCaseExpr(toks: Token[], baseIndent: string): string {
+    const caseKw = applyKeywordCase('CASE', cfg);
+    const whenKw = applyKeywordCase('WHEN', cfg);
+    const thenKw = applyKeywordCase('THEN', cfg);
+    const elseKw = applyKeywordCase('ELSE', cfg);
+    const endKw  = applyKeywordCase('END', cfg);
+    const innerIndent = baseIndent + ' '.repeat(cfg.indent);
+    const valueIndent = innerIndent + ' '.repeat(cfg.indent);
+
+    const lines: string[] = [];
+    let i = 0;
+    // Skip to CASE keyword
+    while (i < toks.length && !(toks[i].value === 'CASE' && toks[i].type === TokenType.KEYWORD)) i++;
+    i++; // skip CASE
+
+    // Optional expr before first WHEN (simple CASE)
+    const exprToks: Token[] = [];
+    while (i < toks.length &&
+           !(toks[i].value === 'WHEN' && toks[i].type === TokenType.KEYWORD) &&
+           !(toks[i].value === 'END'  && toks[i].type === TokenType.KEYWORD)) {
+      exprToks.push(toks[i++]);
+    }
+    lines.push(caseKw + (exprToks.length > 0 ? ' ' + inlineTokens(exprToks) : ''));
+
+    while (i < toks.length) {
+      const tok = toks[i];
+      if (tok.value === 'END' && tok.type === TokenType.KEYWORD) {
+        i++;
+        lines.push(baseIndent + endKw);
+        break;
+      }
+      if (tok.value === 'WHEN' && tok.type === TokenType.KEYWORD) {
+        i++;
+        const condToks: Token[] = [];
+        while (i < toks.length && !(toks[i].value === 'THEN' && toks[i].type === TokenType.KEYWORD)) {
+          condToks.push(toks[i++]);
+        }
+        i++; // skip THEN
+        const thenToks: Token[] = [];
+        let depth = 0;
+        while (i < toks.length) {
+          const t = toks[i];
+          if (t.type === TokenType.LPAREN) depth++;
+          else if (t.type === TokenType.RPAREN) depth--;
+          else if (depth === 0 && (t.value === 'WHEN' || t.value === 'ELSE' || t.value === 'END') && t.type === TokenType.KEYWORD) break;
+          thenToks.push(toks[i++]);
+        }
+        lines.push(innerIndent + whenKw + ' ' + inlineTokens(condToks) + ' ' + thenKw);
+        lines.push(valueIndent + inlineTokens(thenToks));
+        continue;
+      }
+      if (tok.value === 'ELSE' && tok.type === TokenType.KEYWORD) {
+        i++;
+        const elseToks: Token[] = [];
+        let depth = 0;
+        while (i < toks.length) {
+          const t = toks[i];
+          if (t.type === TokenType.LPAREN) depth++;
+          else if (t.type === TokenType.RPAREN) depth--;
+          else if (depth === 0 && t.value === 'END' && t.type === TokenType.KEYWORD) break;
+          elseToks.push(toks[i++]);
+        }
+        lines.push(innerIndent + elseKw);
+        lines.push(valueIndent + inlineTokens(elseToks));
+        continue;
+      }
+      i++;
+    }
+    return lines.join('\n');
+  }
+
   // Format a multi-arg function call with each argument on its own line,
   // aligned to the column right after the opening parenthesis.
   // prefixLen = number of characters before the function name on the current output line.
@@ -696,12 +819,15 @@ export function format(src: string, cfg: BeautifierConfig): string {
     }
     if (curGroup.length > 0) argGroups.push(curGroup);
 
+    // Any tokens after the closing ) (e.g. .Currency_Id, [idx], etc.)
+    const suffix = j + 1 < toks.length ? inlineTokens(toks.slice(j + 1)) : '';
+
     if (argGroups.length <= 1) {
       // Single arg — recurse into it if it contains a breakable nested call
       if (argGroups.length === 1 && hasBreakableCall(argGroups[0])) {
         const innerPrefixLen = prefixLen + funcName.length + 1;
         const innerFormatted = formatCallWithBreaking(argGroups[0], innerPrefixLen);
-        return funcName + '(' + innerFormatted + ')';
+        return funcName + '(' + innerFormatted + ')' + suffix;
       }
       return inlineTokens(toks); // single arg with no breakable nested — keep inline
     }
@@ -719,9 +845,11 @@ export function format(src: string, cfg: BeautifierConfig): string {
         const name = inlineTokens([g[0]]).padEnd(maxNameLen);
         const valToks = g.slice(2);
         const valCol = argStartCol + maxNameLen + 4; // ' => '.length === 4
-        const val = hasMultipleCallArgs(valToks) || hasBreakableCall(valToks)
-          ? formatCallWithBreaking(valToks, valCol)
-          : inlineTokens(valToks);
+        const val = hasCaseExpr(valToks)
+          ? formatCaseExpr(valToks, ' '.repeat(argStartCol + maxNameLen + 4))
+          : hasMultipleCallArgs(valToks) || hasBreakableCall(valToks)
+            ? formatCallWithBreaking(valToks, valCol)
+            : inlineTokens(valToks);
         return `${name} => ${val}`;
       });
     } else {
@@ -733,7 +861,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
       const isLast = k === formattedArgs.length - 1;
       result += argIndent + formattedArgs[k] + (isLast ? ')' : ',\n');
     }
-    return result;
+    return result + suffix;
   }
 
   // Split boolean condition on AND/OR at depth 0 for IF/ELSIF conditions
@@ -885,7 +1013,11 @@ export function format(src: string, cfg: BeautifierConfig): string {
       // Tokens between outer parens: skip leading LPAREN and trailing RPAREN
       const selectToks = headerTokens.slice(3, headerTokens.length - 1);
       const prefix = `${indentStr()}${forKw} ${varName} ${inKw} (`;
-      const dmlIndent = ' '.repeat(prefix.length);
+      // Compute kwWidth so all keywords right-align to the column where SELECT ends
+      const kwWidth = cfg.dml?.leftAlignKeywords ? 0 : getMaxClauseKeywordWidth(splitIntoClauses(selectToks));
+      const selectLen = 6; // 'SELECT'.length
+      // dmlIndent set so that: dmlIndent.length + kwWidth = prefix.length + selectLen
+      const dmlIndent = ' '.repeat(Math.max(0, prefix.length + selectLen - kwWidth));
       const formattedDML = formatDML(selectToks, cfg, dmlIndent);
       const dmlLines = formattedDML.split('\n');
       dmlLines[0] = prefix + dmlLines[0].trimStart();
@@ -1017,8 +1149,20 @@ export function format(src: string, cfg: BeautifierConfig): string {
 
   function formatParams(cfg: BeautifierConfig): string {
     consume(); // (
-    const paramTokens = collectUntil(tok => tok.type === TokenType.RPAREN);
-    consume(); // )
+    // Manually collect until the matching outer ), tracking nested paren depth
+    const paramTokens: Token[] = [];
+    let paramDepth = 0;
+    while (!isDone()) {
+      const pt = peek();
+      if (pt.type === TokenType.LPAREN) { paramDepth++; paramTokens.push(consume()); }
+      else if (pt.type === TokenType.RPAREN) {
+        if (paramDepth === 0) { consume(); break; } // outer closing )
+        paramDepth--;
+        paramTokens.push(consume());
+      } else {
+        paramTokens.push(consume());
+      }
+    }
 
     if (paramTokens.length === 0) return '()';
 
@@ -1209,8 +1353,8 @@ export function format(src: string, cfg: BeautifierConfig): string {
           emit(applyKeywordCase('END', cfg) + endLabel + ';', isPackageBody ? 1 : 0);
         }
       }
-      // Skip trailing /
-      if (peek().type === TokenType.DIVIDE) consume();
+      // Preserve trailing /
+      if (peek().type === TokenType.DIVIDE) { consume(); emit('/'); }
       continue;
     }
 
@@ -1245,8 +1389,8 @@ export function format(src: string, cfg: BeautifierConfig): string {
         if (peek().type === TokenType.SEMICOLON) consume();
         emit(applyKeywordCase('END', cfg) + endLabel + ';');
       }
-      // Skip trailing /
-      if (peek().type === TokenType.DIVIDE) consume();
+      // Preserve trailing /
+      if (peek().type === TokenType.DIVIDE) { consume(); emit('/'); }
       continue;
     }
 
@@ -1260,12 +1404,36 @@ export function format(src: string, cfg: BeautifierConfig): string {
         consume();
         if (lines.length > 0) lines[lines.length - 1] += ';';
       }
-      if (peek().type === TokenType.DIVIDE) consume();
+      if (peek().type === TokenType.DIVIDE) { consume(); emit('/'); }
       continue;
     }
 
-    // Unknown top-level token - skip
-    consume();
+    // Unknown top-level token — collect tokens on the same source line and emit as-is.
+    // If a semicolon appears on the same line, include it and stop.
+    // This handles SQL*Plus directives like WHENEVER, PROMPT, SET, SPOOL, etc.
+    {
+      const firstLine = t.line;
+      const unknownToks: Token[] = [];
+      while (!isDone()) {
+        const ut = peek();
+        // Stop at next line (comment or token on different line)
+        if (ut.line !== firstLine) break;
+        // Stop at LINE_COMMENT on same line (emit it separately next iteration)
+        if (ut.type === TokenType.LINE_COMMENT || ut.type === TokenType.BLOCK_COMMENT) break;
+        unknownToks.push(consume());
+        if (ut.type === TokenType.SEMICOLON) break;
+      }
+      if (unknownToks.length > 0) {
+        const parts: string[] = [];
+        for (let ui = 0; ui < unknownToks.length; ui++) {
+          const ut = unknownToks[ui];
+          const un = unknownToks[ui + 1];
+          parts.push(ut.raw);
+          if (un && un.type !== TokenType.SEMICOLON) parts.push(' ');
+        }
+        emit(parts.join(''), blanks);
+      }
+    }
   }
 
   // Normalize empty lines

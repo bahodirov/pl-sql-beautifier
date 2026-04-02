@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.11] - 2026-04-02
+
+### Fixed
+
+- **Trailing `/` preserved**: SQL\*Plus script terminator `/` at the end of CREATE/PACKAGE blocks, anonymous BEGIN blocks, and standalone DML statements is no longer removed during formatting.
+- **`FOR r IN (SELECT ...)` indentation**: Inner SELECT query inside a cursor FOR loop is now indented relative to the current block indent level instead of being aligned to the column after `(`, preventing excessive right-shift.
+- **`CASE` expression in named call arguments**: `param => case when ... then ... else ... end` arguments are now formatted across multiple lines instead of being collapsed to a single line.
+- **`EXECUTE IMMEDIATE ... USING`**: The `using` clause is now placed on a new line indented one level under `execute immediate`, matching PL/SQL Developer output.
+- **Assignment `variable := value`**: Assignment statements are no longer right-aligned to match the longest LHS in the group — each line now uses a single space after `:=` for consistent formatting.
+
+## [0.1.9] - 2026-03-18
+
+### Fixed
+
+- **`LEFT JOIN (SELECT ...)` subquery formatting**: Subqueries inside `JOIN` clauses are now formatted as proper multiline DML — `from`, `join`, `where` each on their own line with correct indentation — instead of being collapsed into a single unreadable line.
+- **`ON` after derived table**: The `ON` clause following `LEFT JOIN (subquery) alias` is now placed on its own line, correctly aligned with the rest of the `ON`/`AND` conditions.
+
 ## [0.1.8] - 2026-03-17
 
 ### Fixed

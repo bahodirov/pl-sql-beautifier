@@ -48,7 +48,7 @@ export const DEFAULT_CONFIG: BeautifierConfig = {
   useTabCharacter: false,
   tabCharacterSize: 2,
   alignDeclarationGroups: true,
-  alignAssignmentGroups: true,
+  alignAssignmentGroups: false,
   keywordCase: 'LOWER',
   identifierCase: 'INIT_CAP',
   useSpecialCase: true,

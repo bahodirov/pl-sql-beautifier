@@ -212,6 +212,51 @@ function formatTokensWithSubqueries(
       // else: fall through to regular LPAREN processing
     }
 
+    // Detect multi-arg function call: IDENTIFIER[(DOT IDENTIFIER)*](args...)
+    // 3+ positional args or 2+ named args → format with line breaks
+    if (t.type === TokenType.IDENTIFIER) {
+      // Advance past dotted name: Pkg.Func or Pkg.Sub.Func
+      let j = i + 1;
+      while (j + 1 < tokens.length &&
+             tokens[j].type === TokenType.DOT &&
+             tokens[j + 1].type === TokenType.IDENTIFIER) {
+        j += 2;
+      }
+      if (j < tokens.length && tokens[j].type === TokenType.LPAREN) {
+        // Count args and check for named notation
+        let depth = 1;
+        let k = j + 1;
+        let commaCount = 0;
+        let isNamed = false;
+        while (k < tokens.length) {
+          const tok = tokens[k];
+          if (tok.type === TokenType.LPAREN) depth++;
+          else if (tok.type === TokenType.RPAREN) { depth--; if (depth === 0) break; }
+          if (depth === 1 && tok.type === TokenType.COMMA) commaCount++;
+          if (depth === 1 && tok.type === TokenType.ARROW_OP) isNamed = true;
+          k++;
+        }
+        const minCommas = isNamed ? 1 : 2;
+        if (commaCount >= minCommas) {
+          const callTokens = tokens.slice(i, k + 1);
+          const formatted = formatCallInDML(callTokens, cfg, col, lowerAliases);
+          out.push(formatted);
+          const formattedLines = formatted.split('\n');
+          col = formattedLines[formattedLines.length - 1].length;
+          i = k + 1;
+          prevMeaningful = { type: TokenType.RPAREN, raw: ')', value: ')', line: 0, col: 0 };
+          if (i < tokens.length) {
+            const aft = tokens[i];
+            if (aft.type !== TokenType.COMMA && aft.type !== TokenType.RPAREN &&
+                aft.type !== TokenType.SEMICOLON && aft.type !== TokenType.DOT) {
+              out.push(' '); col++;
+            }
+          }
+          continue;
+        }
+      }
+    }
+
     // Regular token — mirror tokensToStr casing logic
     let val: string;
     if (t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN
@@ -255,6 +300,85 @@ function formatTokensWithSubqueries(
   }
 
   return out.join('');
+}
+
+/**
+ * Format a multi-arg function call with each argument on its own line,
+ * aligned to the column right after the opening parenthesis.
+ * Recursively handles nested multi-arg calls and subqueries.
+ */
+function formatCallInDML(
+  tokens: Token[],
+  cfg: BeautifierConfig,
+  startCol: number,
+  lowerAliases = false
+): string {
+  // Collect function name (possibly dotted)
+  let j = 0;
+  const nameToks: Token[] = [];
+  while (j < tokens.length && tokens[j].type !== TokenType.LPAREN) {
+    nameToks.push(tokens[j]);
+    j++;
+  }
+  const funcName = tokensToStr(nameToks, cfg);
+  if (j >= tokens.length || tokens[j].type !== TokenType.LPAREN) {
+    return tokensToStr(tokens, cfg); // fallback
+  }
+  j++; // skip LPAREN
+
+  // Split arguments at depth 0
+  const argGroups: Token[][] = [];
+  let curGroup: Token[] = [];
+  let depth = 0;
+  for (; j < tokens.length; j++) {
+    const tok = tokens[j];
+    if (depth === 0 && tok.type === TokenType.RPAREN) break;
+    if (tok.type === TokenType.LPAREN) depth++;
+    else if (tok.type === TokenType.RPAREN) depth--;
+    if (depth === 0 && tok.type === TokenType.COMMA) {
+      argGroups.push(curGroup);
+      curGroup = [];
+    } else {
+      curGroup.push(tok);
+    }
+  }
+  if (curGroup.length > 0) argGroups.push(curGroup);
+
+  // Any tokens after the closing ) (e.g. .Property, [idx])
+  const suffix = j + 1 < tokens.length ? tokensToStr(tokens.slice(j + 1), cfg) : '';
+
+  if (argGroups.length <= 1) return tokensToStr(tokens, cfg);
+
+  const argStartCol = startCol + funcName.length + 1; // +1 for '('
+  const argIndent = ' '.repeat(argStartCol);
+
+  // Format each argument — recurse so nested calls and subqueries also break
+  const formattedArgs = argGroups.map(g =>
+    formatTokensWithSubqueries(g, cfg, argStartCol, lowerAliases)
+  );
+
+  // Check if all args use named notation for aligned padding
+  const isNamed = argGroups.every(g => g.length >= 2 && g[1].type === TokenType.ARROW_OP);
+  let alignedArgs: string[];
+  if (isNamed) {
+    const maxNameLen = Math.max(...argGroups.map(g => tokensToStr([g[0]], cfg).length));
+    alignedArgs = argGroups.map((g, idx) => {
+      const name = tokensToStr([g[0]], cfg).padEnd(maxNameLen);
+      const valToks = g.slice(2);
+      const valCol = argStartCol + maxNameLen + 4; // ' => '.length === 4
+      const val = formatTokensWithSubqueries(valToks, cfg, valCol, lowerAliases);
+      return `${name} => ${val}`;
+    });
+  } else {
+    alignedArgs = formattedArgs;
+  }
+
+  let result = funcName + '(' + alignedArgs[0] + ',\n';
+  for (let k = 1; k < alignedArgs.length; k++) {
+    const isLast = k === alignedArgs.length - 1;
+    result += argIndent + alignedArgs[k] + (isLast ? ')' : ',\n');
+  }
+  return result + suffix;
 }
 
 /** Split SELECT item list into groups of tokens (one group per item, no commas). */
@@ -388,14 +512,16 @@ function formatSelect(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
       }
 
     } else if (clause.keyword === 'CONNECT') {
-      const padded = padKeyword(kw + ' ' + applyKeywordCase('BY', cfg), kwWidth, cfg.dml.leftAlignKeywords);
+      const padded = padKeyword(kw, kwWidth, cfg.dml.leftAlignKeywords);
+      const byKw = applyKeywordCase('BY', cfg);
       const restTokens = clause.tokens[0]?.value === 'BY' ? clause.tokens.slice(1) : clause.tokens;
-      lines.push(`${baseIndent}${padded} ${tokensToStr(restTokens, cfg)}`);
+      lines.push(`${baseIndent}${padded} ${byKw} ${tokensToStr(restTokens, cfg)}`);
 
     } else if (clause.keyword === 'START') {
-      const padded = padKeyword(kw + ' ' + applyKeywordCase('WITH', cfg), kwWidth, cfg.dml.leftAlignKeywords);
+      const padded = padKeyword(kw, kwWidth, cfg.dml.leftAlignKeywords);
+      const withKw = applyKeywordCase('WITH', cfg);
       const restTokens = clause.tokens[0]?.value === 'WITH' ? clause.tokens.slice(1) : clause.tokens;
-      lines.push(`${baseIndent}${padded} ${tokensToStr(restTokens, cfg)}`);
+      lines.push(`${baseIndent}${padded} ${withKw} ${tokensToStr(restTokens, cfg)}`);
 
     } else {
       const padded = padKeyword(kw, kwWidth, cfg.dml.leftAlignKeywords);
@@ -406,6 +532,18 @@ function formatSelect(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
   return lines.join('\n');
 }
 
+/** Find index of ON keyword at depth 0 (not inside a subquery paren). */
+function findOuterOnIdx(tokens: Token[]): number {
+  let depth = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.type === TokenType.LPAREN) depth++;
+    else if (t.type === TokenType.RPAREN) depth--;
+    else if (depth === 0 && t.value === 'ON' && t.type === TokenType.KEYWORD) return i;
+  }
+  return -1;
+}
+
 function formatFromClause(
   tokens: Token[], cfg: BeautifierConfig,
   baseIndent: string, fromPadded: string, kwWidth: number
@@ -414,34 +552,33 @@ function formatFromClause(
   // Split on JOIN keywords
   const joinSplit = splitOnJoins(tokens);
 
-  if (joinSplit.length === 1) {
-    lines.push(`${baseIndent}${fromPadded} ${tokensToStr(joinSplit[0].tokens, cfg, true)}`);
-  } else {
-    lines.push(`${baseIndent}${fromPadded} ${tokensToStr(joinSplit[0].tokens, cfg, true)}`);
-    for (let i = 1; i < joinSplit.length; i++) {
-      const j = joinSplit[i];
-      const joinKw = applyKeywordCase(j.keyword, cfg);
-      const padded = padKeyword(joinKw, kwWidth, cfg.dml.leftAlignKeywords);
+  const firstLineStart = `${baseIndent}${fromPadded} `;
+  lines.push(firstLineStart + formatTokensWithSubqueries(joinSplit[0].tokens, cfg, firstLineStart.length, true));
 
-      if (cfg.dml.joinSplitBeforeOn) {
-        // Split before ON
-        const onIdx = j.tokens.findIndex(t => t.value === 'ON');
-        if (onIdx >= 0) {
-          const beforeOn = j.tokens.slice(0, onIdx);
-          const afterOn  = j.tokens.slice(onIdx + 1);
-          lines.push(`${baseIndent}${padded} ${tokensToStr(beforeOn, cfg, true)}`);
-          const onPadded = padKeyword(applyKeywordCase('ON', cfg), kwWidth, cfg.dml.leftAlignKeywords);
-          // AND in ON clause right-aligned to kwWidth so data aligns with ON data
-          const onAndOrIndent = cfg.dml.leftAlignKeywords
-            ? baseIndent
-            : baseIndent + ' '.repeat(Math.max(0, kwWidth - applyKeywordCase('AND', cfg).length));
-          lines.push(...formatWhereClause(afterOn, cfg, baseIndent, onPadded, kwWidth, onAndOrIndent));
-        } else {
-          lines.push(`${baseIndent}${padded} ${tokensToStr(j.tokens, cfg, true)}`);
-        }
+  for (let i = 1; i < joinSplit.length; i++) {
+    const j = joinSplit[i];
+    const joinKw = applyKeywordCase(j.keyword, cfg);
+    const padded = padKeyword(joinKw, kwWidth, cfg.dml.leftAlignKeywords);
+    const joinLineStart = `${baseIndent}${padded} `;
+
+    if (cfg.dml.joinSplitBeforeOn) {
+      // Use depth-aware ON search so we skip ON tokens inside (SELECT ...) subqueries
+      const onIdx = findOuterOnIdx(j.tokens);
+      if (onIdx >= 0) {
+        const beforeOn = j.tokens.slice(0, onIdx);
+        const afterOn  = j.tokens.slice(onIdx + 1);
+        lines.push(joinLineStart + formatTokensWithSubqueries(beforeOn, cfg, joinLineStart.length, true));
+        const onPadded = padKeyword(applyKeywordCase('ON', cfg), kwWidth, cfg.dml.leftAlignKeywords);
+        // AND in ON clause right-aligned to kwWidth so data aligns with ON data
+        const onAndOrIndent = cfg.dml.leftAlignKeywords
+          ? baseIndent
+          : baseIndent + ' '.repeat(Math.max(0, kwWidth - applyKeywordCase('AND', cfg).length));
+        lines.push(...formatWhereClause(afterOn, cfg, baseIndent, onPadded, kwWidth, onAndOrIndent));
       } else {
-        lines.push(`${baseIndent}${padded} ${tokensToStr(j.tokens, cfg, true)}`);
+        lines.push(joinLineStart + formatTokensWithSubqueries(j.tokens, cfg, joinLineStart.length, true));
       }
+    } else {
+      lines.push(joinLineStart + formatTokensWithSubqueries(j.tokens, cfg, joinLineStart.length, true));
     }
   }
   return lines;
@@ -800,11 +937,11 @@ function padKeyword(kw: string, width: number, leftAlign: boolean): string {
   return kw.padStart(width);
 }
 
-function getMaxClauseKeywordWidth(clauses: DMLClause[]): number {
+export function getMaxClauseKeywordWidth(clauses: DMLClause[]): number {
   const widths = clauses.map(c => {
     if (c.keyword === 'GROUP' || c.keyword === 'ORDER') return c.keyword.length + 3; // "+ BY"
-    if (c.keyword === 'CONNECT') return 10; // "CONNECT BY"
-    if (c.keyword === 'START') return 10; // "START WITH"
+    if (c.keyword === 'CONNECT') return 7; // "CONNECT"
+    if (c.keyword === 'START') return 5; // "START"
     // JOIN compound keywords
     if (JOIN_KEYWORDS.has(c.keyword)) return c.keyword.length;
     return c.keyword.length;
@@ -812,7 +949,7 @@ function getMaxClauseKeywordWidth(clauses: DMLClause[]): number {
   return Math.max(6, ...widths); // minimum 6 (SELECT)
 }
 
-function splitIntoClauses(tokens: Token[]): DMLClause[] {
+export function splitIntoClauses(tokens: Token[]): DMLClause[] {
   const clauses: DMLClause[] = [];
   let depth = 0;
 
