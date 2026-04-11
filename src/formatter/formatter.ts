@@ -156,22 +156,44 @@ export function format(src: string, cfg: BeautifierConfig): string {
   interface PendingDecl {
     blankBefore: number;
     line: DeclLine;
+    defaultValTokens?: Token[];  // set when defaultVal contains a breakable function call
   }
 
   function flushDeclGroup(group: PendingDecl[], indent: string): void {
     if (group.length === 0) return;
+    const maxIdLen = Math.max(...group.map(g => g.line.identifier.length));
     if (cfg.alignDeclarationGroups && group.length > 1) {
       const aligned = alignDeclarations(group.map(g => g.line));
-      for (let i = 0; i < aligned.length; i++) {
-        emit(aligned[i], i === 0 ? group[0].blankBefore : 0);
+      for (let i = 0; i < group.length; i++) {
+        const g = group[i];
+        const blanks = i === 0 ? group[0].blankBefore : 0;
+        if (g.defaultValTokens) {
+          const l = g.line;
+          const typeWithConstraint = l.constraint ? `${l.constraint} ${l.dataType}` : l.dataType;
+          const paddedId = l.identifier.padEnd(maxIdLen);
+          const prefix = `${l.indent}${paddedId} ${typeWithConstraint} := `;
+          const formatted = formatCallWithBreaking(g.defaultValTokens, prefix.length);
+          const commentStr = l.comment ? ` ${l.comment}` : '';
+          emit(`${prefix}${formatted}${l.semicolon}${commentStr}`, blanks);
+        } else {
+          emit(aligned[i], blanks);
+        }
       }
     } else {
       for (const g of group) {
         const l = g.line;
-        const typeWithConstraint = l.constraint ? `${l.constraint} ${l.dataType}` : l.dataType;
-        const def = l.defaultVal ? ` := ${l.defaultVal}` : '';
-        const comment = l.comment ? ` ${l.comment}` : '';
-        emit(`${indent}${l.identifier} ${typeWithConstraint}${def}${l.semicolon}${comment}`, g.blankBefore);
+        if (g.defaultValTokens) {
+          const typeWithConstraint = l.constraint ? `${l.constraint} ${l.dataType}` : l.dataType;
+          const prefix = `${l.indent}${l.identifier} ${typeWithConstraint} := `;
+          const formatted = formatCallWithBreaking(g.defaultValTokens, prefix.length);
+          const commentStr = l.comment ? ` ${l.comment}` : '';
+          emit(`${prefix}${formatted}${l.semicolon}${commentStr}`, g.blankBefore);
+        } else {
+          const typeWithConstraint = l.constraint ? `${l.constraint} ${l.dataType}` : l.dataType;
+          const def = l.defaultVal ? ` := ${l.defaultVal}` : '';
+          const comment = l.comment ? ` ${l.comment}` : '';
+          emit(`${indent}${l.identifier} ${typeWithConstraint}${def}${l.semicolon}${comment}`, g.blankBefore);
+        }
       }
     }
   }
@@ -323,38 +345,20 @@ export function format(src: string, cfg: BeautifierConfig): string {
       }
 
       let defaultVal = '';
+      let defaultValTokens: Token[] | undefined;
       if (!isDone() && peek().type === TokenType.ASSIGNMENT_OP) {
         consume(); // :=
         const valTokens = collectUntil(tok => tok.type === TokenType.SEMICOLON);
 
         if (hasMultipleCallArgs(valTokens) || hasBreakableCall(valTokens)) {
-          // Flush pending group before emitting a multi-line declaration
-          flushDeclGroup(declGroup, indentStr());
-          declGroup = [];
-
-          let declSemi = '';
-          let declSemiLine = -1;
-          if (!isDone() && peek().type === TokenType.SEMICOLON) {
-            const semiTok = consume();
-            declSemi = semiTok.raw;
-            declSemiLine = semiTok.line;
-          }
-          let declComment = '';
-          if (!isDone() && peek().type === TokenType.LINE_COMMENT) {
-            if (!isSeparatorComment(peek().raw) && declSemiLine >= 0 && peek().line === declSemiLine) {
-              declComment = consume().raw;
-            }
-          }
-          const typeStr = inlineTokens(typeTokens);
-          const typeWithConstraint = constraint ? `${constraint} ${typeStr}` : typeStr;
-          const prefix = `${indentStr()}${identName} ${typeWithConstraint} := `;
-          const formatted = formatCallWithBreaking(valTokens, prefix.length);
-          const commentStr = declComment ? ` ${declComment}` : '';
-          emit(`${prefix}${formatted}${declSemi}${commentStr}`, blanks);
-          continue;
+          // Keep in the current declGroup so identifier columns stay aligned.
+          // Store raw tokens; flushDeclGroup will call formatCallWithBreaking
+          // with the correct padded-identifier prefix length.
+          defaultValTokens = valTokens;
+          defaultVal = inlineTokens(valTokens); // placeholder so DeclLine is complete
+        } else {
+          defaultVal = inlineTokens(valTokens);
         }
-
-        defaultVal = inlineTokens(valTokens);
       }
 
       // collect semicolon
@@ -384,7 +388,7 @@ export function format(src: string, cfg: BeautifierConfig): string {
         comment,
         semicolon: semi,
       };
-      declGroup.push({ blankBefore: blanks, line: declLine });
+      declGroup.push({ blankBefore: blanks, line: declLine, defaultValTokens });
     }
     flushDeclGroup(declGroup, indentStr());
     declGroup = [];
