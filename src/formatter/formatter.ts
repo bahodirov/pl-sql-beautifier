@@ -326,6 +326,34 @@ export function format(src: string, cfg: BeautifierConfig): string {
       if (!isDone() && peek().type === TokenType.ASSIGNMENT_OP) {
         consume(); // :=
         const valTokens = collectUntil(tok => tok.type === TokenType.SEMICOLON);
+
+        if (hasMultipleCallArgs(valTokens) || hasBreakableCall(valTokens)) {
+          // Flush pending group before emitting a multi-line declaration
+          flushDeclGroup(declGroup, indentStr());
+          declGroup = [];
+
+          let declSemi = '';
+          let declSemiLine = -1;
+          if (!isDone() && peek().type === TokenType.SEMICOLON) {
+            const semiTok = consume();
+            declSemi = semiTok.raw;
+            declSemiLine = semiTok.line;
+          }
+          let declComment = '';
+          if (!isDone() && peek().type === TokenType.LINE_COMMENT) {
+            if (!isSeparatorComment(peek().raw) && declSemiLine >= 0 && peek().line === declSemiLine) {
+              declComment = consume().raw;
+            }
+          }
+          const typeStr = inlineTokens(typeTokens);
+          const typeWithConstraint = constraint ? `${constraint} ${typeStr}` : typeStr;
+          const prefix = `${indentStr()}${identName} ${typeWithConstraint} := `;
+          const formatted = formatCallWithBreaking(valTokens, prefix.length);
+          const commentStr = declComment ? ` ${declComment}` : '';
+          emit(`${prefix}${formatted}${declSemi}${commentStr}`, blanks);
+          continue;
+        }
+
         defaultVal = inlineTokens(valTokens);
       }
 
@@ -861,7 +889,8 @@ export function format(src: string, cfg: BeautifierConfig): string {
       const isLast = k === formattedArgs.length - 1;
       result += argIndent + formattedArgs[k] + (isLast ? ')' : ',\n');
     }
-    return result + suffix;
+    const sep = (suffix && !suffix.startsWith('.') && !suffix.startsWith('[') && !suffix.startsWith('%')) ? ' ' : '';
+    return result + sep + suffix;
   }
 
   // Split boolean condition on AND/OR at depth 0 for IF/ELSIF conditions
