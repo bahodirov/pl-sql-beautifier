@@ -491,6 +491,21 @@ function formatSelect(tokens: Token[], cfg: BeautifierConfig, baseIndent: string
         lines.push(subResult);
       }
 
+    } else if (clause.keyword === 'INTO') {
+      // SELECT ... INTO var1, var2, var3 — each variable on its own line
+      const padded = padKeyword(kw, kwWidth, cfg.dml.leftAlignKeywords);
+      const itemIndent = baseIndent + ' '.repeat(padded.length + 1);
+      const intoItems = splitSelectItemTokens(clause.tokens);
+      if (intoItems.length <= 1) {
+        lines.push(`${baseIndent}${padded} ${tokensToStr(clause.tokens, cfg)}`);
+      } else {
+        lines.push(`${baseIndent}${padded} ${tokensToStr(intoItems[0], cfg)},`);
+        for (let si = 1; si < intoItems.length; si++) {
+          const isLast = si === intoItems.length - 1;
+          lines.push(itemIndent + tokensToStr(intoItems[si], cfg) + (isLast ? '' : ','));
+        }
+      }
+
     } else if (clause.keyword === 'CONNECT') {
       const padded = padKeyword(kw, kwWidth, cfg.dml.leftAlignKeywords);
       const byKw = applyKeywordCase('BY', cfg);
