@@ -20,22 +20,8 @@ const JOIN_KEYWORDS = new Set([
   'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER', 'CROSS', 'NATURAL',
 ]);
 
-const SQL_FUNCTIONS = new Set([
-  'count', 'sum', 'max', 'min', 'avg',
-  'nvl', 'nvl2', 'decode', 'coalesce', 'nullif', 'greatest', 'least',
-  'to_char', 'to_date', 'to_number', 'to_timestamp', 'to_clob', 'to_blob',
-  'substr', 'substrb', 'length', 'lengthb', 'upper', 'lower', 'initcap',
-  'trim', 'ltrim', 'rtrim', 'lpad', 'rpad', 'replace', 'instr', 'instrb',
-  'round', 'trunc', 'mod', 'abs', 'ceil', 'floor', 'sign', 'power', 'sqrt',
-  'sysdate', 'systimestamp', 'current_date', 'current_timestamp',
-  'rank', 'dense_rank', 'row_number', 'lead', 'lag', 'first_value', 'last_value',
-  'listagg', 'xmlagg', 'cast', 'convert',
-  'regexp_like', 'regexp_substr', 'regexp_replace', 'regexp_instr', 'regexp_count',
-  'sys_guid', 'uid', 'user', 'userenv', 'dump', 'vsize',
-  'sys_connect_by_path', 'connect_by_root',
-]);
 
-function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = false, lowerFunctions = true): string {
+function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = false): string {
   const parts: string[] = [];
   let prevMeaningful: Token | null = null;
 
@@ -49,10 +35,7 @@ function tokensToStr(tokens: Token[], cfg: BeautifierConfig, lowerAliases = fals
     }
 
     let val: string;
-    if (t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN
-        && SQL_FUNCTIONS.has(t.raw.toLowerCase())) {
-      val = t.raw.toLowerCase();
-    } else if (lowerAliases && t.type === TokenType.IDENTIFIER) {
+    if (lowerAliases && t.type === TokenType.IDENTIFIER) {
       // Only treat as alias if it has no underscores (PL/SQL variables always have underscores)
       const isPLSQLVar = t.raw.includes('_');
       const isAliasDef = !isPLSQLVar && prevMeaningful !== null && (
@@ -257,12 +240,9 @@ function formatTokensWithSubqueries(
       }
     }
 
-    // Regular token — mirror tokensToStr casing logic
+    // Regular token
     let val: string;
-    if (t.type === TokenType.IDENTIFIER && next?.type === TokenType.LPAREN
-        && SQL_FUNCTIONS.has(t.raw.toLowerCase())) {
-      val = t.raw.toLowerCase();
-    } else if (lowerAliases && t.type === TokenType.IDENTIFIER) {
+    if (lowerAliases && t.type === TokenType.IDENTIFIER) {
       const isPLSQLVar = t.raw.includes('_');
       const isAliasDef = !isPLSQLVar && prevMeaningful !== null && (
         prevMeaningful.type === TokenType.IDENTIFIER ||
