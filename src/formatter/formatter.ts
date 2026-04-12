@@ -1469,10 +1469,25 @@ export function format(src: string, cfg: BeautifierConfig): string {
     }
   }
 
+  // Flatten any multi-line strings (e.g. from DML formatter) into individual lines
+  const flatLines: string[] = [];
+  for (const line of lines) {
+    if (line.includes('\n')) {
+      for (const sub of line.split('\n')) flatLines.push(sub);
+    } else {
+      flatLines.push(line);
+    }
+  }
+
+  // Apply right-margin wrapping before normalizing empty lines
+  const wrappedLines = cfg.rightMargin > 0
+    ? flatLines.flatMap(l => wrapLongLine(l, cfg.rightMargin, cfg.indent))
+    : flatLines;
+
   // Normalize empty lines
   const result: string[] = [];
   let consecutive = 0;
-  for (const line of lines) {
+  for (const line of wrappedLines) {
     if (line.trim() === '') {
       consecutive++;
       if (consecutive <= cfg.emptyLines) result.push('');
@@ -1483,6 +1498,204 @@ export function format(src: string, cfg: BeautifierConfig): string {
   }
 
   return result.join('\n').trimEnd() + '\n';
+}
+
+// ─── Right-margin line wrapping ──────────────────────────────────────────────
+
+interface SplitCandidate {
+  /** End index in `content` for the first part (exclusive). */
+  pos: number;
+  /** Start index in `content` for the continuation text. */
+  contPos: number;
+  /** Leading whitespace string for the continuation line. */
+  contIndent: string;
+  /** Lower value = higher priority. */
+  prio: number;
+}
+
+interface LineSplit {
+  firstPart: string;
+  rest: string;
+  contIndent: string;
+}
+
+/**
+ * Scan `content` (a single line without its leading indent) for the best
+ * position to wrap it.  Returns null when no safe split point is found
+ * (e.g. the content is a long string literal or comment).
+ *
+ * Priority order (lower prio number wins):
+ *   10  depth-0 comma
+ *   20  depth-1 comma (inside one paren level) → align to after '('
+ *   30  depth-0 || operator              → align to value start
+ *   40  depth-0 := assignment             → indent one level deeper
+ *   50  depth-0 AND / OR                  → indent one level deeper
+ */
+function findSplitPoint(
+  content: string,
+  baseIndent: string,
+  rightMargin: number,
+  indentSize: number,
+): LineSplit | null {
+  const baseLen = baseIndent.length;
+  const cands: SplitCandidate[] = [];
+
+  let depth = 0;
+  let inStr = false;
+  const parenCols: number[] = []; // absolute column right after each unmatched '('
+
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+
+    // ── Oracle string literals: ' ... '' ... ' ─────────────────────────
+    if (!inStr && ch === "'") { inStr = true; continue; }
+    if (inStr) {
+      if (ch === "'" && content[i + 1] === "'") { i++; continue; } // escaped ''
+      if (ch === "'") inStr = false;
+      continue;
+    }
+
+    // ── Inline comment: nothing after -- is splittable ─────────────────
+    if (ch === '-' && content[i + 1] === '-') break;
+
+    // ── Paren depth tracking ───────────────────────────────────────────
+    if (ch === '(') {
+      depth++;
+      parenCols.push(baseLen + i + 1); // column of character after '('
+      continue;
+    }
+    if (ch === ')') {
+      // Clamp depth at 0: continuation lines may start with ')' that closes a
+      // paren opened on a previous line.  Going negative would mis-classify
+      // subsequent '(' operators, breaking alignment detection.
+      if (depth > 0) {
+        depth--;
+        if (parenCols.length > 0) parenCols.pop();
+      }
+      continue;
+    }
+
+    // ── Candidate: comma ───────────────────────────────────────────────
+    if (ch === ',') {
+      let contPos = i + 1;
+      while (contPos < content.length && content[contPos] === ' ') contPos++;
+
+      if (depth === 0) {
+        cands.push({ pos: i + 1, contPos, contIndent: baseIndent, prio: 10 });
+      } else if (depth === 1 && parenCols.length > 0) {
+        const col = parenCols[parenCols.length - 1];
+        cands.push({ pos: i + 1, contPos, contIndent: ' '.repeat(col), prio: 30 });
+      }
+      continue;
+    }
+
+    // ── Candidate: concat operator || ──────────────────────────────────
+    // Priority 20 (above depth-1 commas) because splitting at a high-level
+    // || produces better alignment than diving into a nested function call.
+    if (ch === '|' && content[i + 1] === '|' && depth === 0) {
+      // Split right before '||' (trim trailing space from first part)
+      let splitPos = i;
+      while (splitPos > 0 && content[splitPos - 1] === ' ') splitPos--;
+
+      // Align continuation to where the value expression started:
+      //  • if there is a ':=' on this line → align to right after ':= '
+      //  • otherwise → stay at the same base indent (|| chain continuation)
+      const assignIdx = content.indexOf(':=');
+      const col = (assignIdx >= 0 && assignIdx < i)
+        ? baseLen + assignIdx + 3      // after ':= '
+        : baseLen;                     // same indent (avoids cascading indentation)
+      cands.push({
+        pos: splitPos,
+        contPos: i,
+        contIndent: ' '.repeat(col),
+        prio: 20,
+      });
+      i++; // skip second '|'
+      continue;
+    }
+
+    // ── Candidate: assignment := ───────────────────────────────────────
+    if (ch === ':' && content[i + 1] === '=' && depth === 0) {
+      let contPos = i + 2;
+      while (contPos < content.length && content[contPos] === ' ') contPos++;
+      cands.push({
+        pos: i + 2,
+        contPos,
+        contIndent: baseIndent + ' '.repeat(indentSize),
+        prio: 40,
+      });
+      i++; // skip '='
+      continue;
+    }
+
+    // ── Candidate: AND / OR at depth 0 ────────────────────────────────
+    if (depth === 0) {
+      const rest = content.slice(i);
+      if (/^(?:AND|OR)\s/i.test(rest)) {
+        let splitPos = i;
+        while (splitPos > 0 && content[splitPos - 1] === ' ') splitPos--;
+        cands.push({
+          pos: splitPos,
+          contPos: i,
+          contIndent: baseIndent + ' '.repeat(indentSize),
+          prio: 25,
+        });
+      }
+    }
+  }
+
+  if (cands.length === 0) return null;
+
+  // Group by priority, then within each group try rightmost candidate first
+  const byPrio = new Map<number, SplitCandidate[]>();
+  for (const c of cands) {
+    if (!byPrio.has(c.prio)) byPrio.set(c.prio, []);
+    byPrio.get(c.prio)!.push(c);
+  }
+
+  const priorities = [...byPrio.keys()].sort((a, b) => a - b);
+  for (const prio of priorities) {
+    const group = byPrio.get(prio)!.sort((a, b) => b.pos - a.pos); // rightmost first
+    for (const c of group) {
+      const firstPart = content.slice(0, c.pos).trimEnd();
+      const rest = content.slice(c.contPos).trimStart();
+      if (
+        firstPart.length > 0 &&
+        rest.length > 0 &&
+        baseLen + firstPart.length <= rightMargin
+      ) {
+        return { firstPart, rest, contIndent: c.contIndent };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Attempt to wrap a single output line that exceeds `rightMargin` columns.
+ * The line is returned unchanged when no safe split point exists (e.g. a long
+ * string literal or a comment).  Wrapping recurses so that continuation lines
+ * are also wrapped if they remain too long.
+ */
+function wrapLongLine(line: string, rightMargin: number, indentSize: number): string[] {
+  if (line.length <= rightMargin) return [line];
+
+  const baseIndent = /^(\s*)/.exec(line)![1];
+  const content = line.slice(baseIndent.length);
+
+  // Never touch empty lines or lines that are purely a comment
+  if (content.length === 0 || content.startsWith('--') || content.startsWith('/*')) {
+    return [line];
+  }
+
+  const split = findSplitPoint(content, baseIndent, rightMargin, indentSize);
+  if (!split) return [line];
+
+  const firstLine = baseIndent + split.firstPart;
+  const contLine  = split.contIndent + split.rest;
+
+  return [firstLine, ...wrapLongLine(contLine, rightMargin, indentSize)];
 }
 
 function computeBlanksBefore(tokens: Token[]): number[] {
