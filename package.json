@@ -1,8 +1,13 @@
 {
   "name": "plsql-beautifier",
   "displayName": "PL/SQL Beautifier",
+<<<<<<< HEAD
   "description": "Format PL/SQL / SQL code using PL/SQL Developer-compatible beautifier settings",
   "version": "0.1.12",
+=======
+  "description": "Format PL/SQL / SQL code with consistent, readable style — no configuration needed",
+  "version": "0.1.11",
+>>>>>>> ad8bd1e8e32ee9b446824c398511c61878b5589f
   "publisher": "Dilshod",
   "license": "MIT",
   "repository": {
