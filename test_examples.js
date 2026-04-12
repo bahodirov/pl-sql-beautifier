@@ -202,8 +202,7 @@ console.log(`
 2. MISSING BLANK LINES BETWEEN CONSECUTIVE PROC/FUNC DECLARATIONS (130+ occurrences)
    When two procedure/function declarations appear back-to-back (or with a
    semicolon-terminated one-liner) the formatter does not insert a blank line
-   between them, even though PL/SQL Developer always inserts one blank line
-   between each declaration.
+   between them — the formatter should insert one blank line between each declaration.
 
 3. MISSING BLANK LINE BETWEEN PACKAGE HEADER AND FIRST PROC/FUNC DECLARATION
    Immediately after "create or replace package Foo is" the first Procedure/
@@ -228,8 +227,7 @@ console.log(`
 
 7. LONG LINES NOT BROKEN (5196 lines > 200 chars)
    Many function/procedure calls with many named arguments are not being
-   line-broken. PL/SQL Developer wraps lines at ~120 chars; the formatter
-   leaves some calls on a single line even when they are hundreds of chars long.
+   line-broken. The formatter leaves some calls on a single line even when they are hundreds of chars long.
    (Some may be intentional, but calls like z_Mcg_Action_Bonus_Limits.Exist_Lock
    with 10+ named args remain on one line.)
 `);

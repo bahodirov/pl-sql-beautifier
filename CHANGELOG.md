@@ -7,7 +7,7 @@
 - **Trailing `/` preserved**: SQL\*Plus script terminator `/` at the end of CREATE/PACKAGE blocks, anonymous BEGIN blocks, and standalone DML statements is no longer removed during formatting.
 - **`FOR r IN (SELECT ...)` indentation**: Inner SELECT query inside a cursor FOR loop is now indented relative to the current block indent level instead of being aligned to the column after `(`, preventing excessive right-shift.
 - **`CASE` expression in named call arguments**: `param => case when ... then ... else ... end` arguments are now formatted across multiple lines instead of being collapsed to a single line.
-- **`EXECUTE IMMEDIATE ... USING`**: The `using` clause is now placed on a new line indented one level under `execute immediate`, matching PL/SQL Developer output.
+- **`EXECUTE IMMEDIATE ... USING`**: The `using` clause is now placed on a new line indented one level under `execute immediate`.
 - **Assignment `variable := value`**: Assignment statements are no longer right-aligned to match the longest LHS in the group — each line now uses a single space after `:=` for consistent formatting.
 
 ## [0.1.9] - 2026-03-18
@@ -28,20 +28,20 @@
 
 ### Changed
 
-- **Keywords lowercase**: All SQL/PLSQL keywords now output in lowercase (`select`, `begin`, `end`, `return`, etc.) matching PL/SQL Developer default style.
-- **Identifiers Init_Cap**: Identifiers now use Init_Cap casing (`v_Company_Id`, `Get_Local_Code`) matching PL/SQL Developer output.
+- **Keywords lowercase**: All SQL/PLSQL keywords now output in lowercase (`select`, `begin`, `end`, `return`, etc.).
+- **Identifiers Init_Cap**: Identifiers now use Init_Cap casing (`v_Company_Id`, `Get_Local_Code`).
 - **`..` range operator spacing**: `for i in 1..n` is now correctly formatted as `for i in 1 .. n` with spaces around the range operator.
 - **`UNION ALL` casing**: `ALL` keyword in `UNION ALL` now correctly follows keyword case setting (outputs `union all`).
-- **Named 2-argument calls line-breaking**: Function/procedure calls using named notation (`param => value`) with 2 or more arguments are now split across multiple lines, matching PL/SQL Developer behavior.
+- **Named 2-argument calls line-breaking**: Function/procedure calls using named notation (`param => value`) with 2 or more arguments are now split across multiple lines.
 - **Nested call line-breaking**: Calls like `Push(Pkg.Func(i_A => a, i_B => b))` now recursively break the inner named call across lines.
-- **`BULK COLLECT` as separate clause**: `bulk collect` is now rendered on its own line in SELECT statements, matching PL/SQL Developer output.
-- **Removed `.br` file support**: Extension now uses built-in defaults only — no `.br` config file reading or workspace search.
+- **`BULK COLLECT` as separate clause**: `bulk collect` is now rendered on its own line in SELECT statements.
+- **Removed external config file support**: Extension now uses built-in defaults only.
 
 ## [0.1.4] - 2026-03-10
 
 ### Changed
 
-- **Cursor FOR loop formatting**: `FOR r IN (SELECT ...)` loops now format the inner SELECT query across multiple lines with right-aligned DML keywords, matching PL/SQL Developer output.
+- **Cursor FOR loop formatting**: `FOR r IN (SELECT ...)` loops now format the inner SELECT query across multiple lines with right-aligned DML keywords.
 - **Blank line before RETURN**: A blank line is now always inserted before `RETURN` statements in BEGIN blocks, improving readability even when the source has no blank line there.
 - **Parameter indentation**: Function/procedure parameters are always indented one level inside the opening parenthesis (fixed edge case with `atLeftMargin` config).
 - **Subquery formatting**: Embedded `(SELECT ...)` subqueries in WHERE conditions, EXISTS, IN, and SELECT items are now formatted across multiple lines.
@@ -55,7 +55,7 @@
 
 ### Changed
 
-- **Function/Procedure keyword casing**: `FUNCTION` and `PROCEDURE` keywords are now formatted as `Function` and `Procedure` (Init_Cap) by default, matching PL/SQL Developer convention.
+- **Function/Procedure keyword casing**: `FUNCTION` and `PROCEDURE` keywords are now formatted as `Function` and `Procedure` (Init_Cap) by default.
 - **Parameter list indentation**: Function/procedure parameters are now indented one level inside the opening parenthesis (e.g. 2 spaces for default indent), giving clearer visual separation.
 - **WHERE clause AND/OR indentation**: `AND` and `OR` conditions inside a `WHERE` clause are now indented one extra level from the `WHERE` keyword, making nested conditions easier to read.
 - **SQL function names lowercase**: Built-in SQL functions (e.g. `count`, `max`, `min`, `sum`, `nvl`, `to_char`) are now rendered in lowercase when used inside SQL queries.
@@ -66,7 +66,7 @@
 
 ### Added
 
-- Initial release with PL/SQL Developer `.br` config file support
+- Initial release
 - Formatting for PL/SQL packages, procedures, functions, triggers, and anonymous blocks
 - Declaration and assignment group alignment
 - Parameter list formatting with aligned columns

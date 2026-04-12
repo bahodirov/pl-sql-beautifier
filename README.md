@@ -1,11 +1,11 @@
 # PL/SQL Beautifier
 
-A Visual Studio Code extension that formats PL/SQL and SQL code using **PL/SQL Developer–compatible** beautifier rules.
+A Visual Studio Code extension that automatically formats PL/SQL and SQL code with consistent, readable style — no configuration needed.
 
 ## Features
 
 - Formats PL/SQL packages, procedures, functions, triggers, and anonymous blocks
-- Reads your existing **PL/SQL Developer `.br` config file** — no need to reconfigure
+- Works out of the box with sensible built-in defaults — no config files required
 - Supports all common PL/SQL constructs:
   - `IF / ELSIF / ELSE / END IF`
   - `CASE / WHEN / ELSE / END CASE`
@@ -68,7 +68,7 @@ create or replace Function get_local_code
   v_use_local_code boolean := false;
 begin
   v_use_local_code := pkg.get_flag(i_company_id => v_company_id,
-                                   i_filial_id => v_filial_id);
+                                   i_filial_id   => v_filial_id);
 
   select t.local_code
     into v_result
